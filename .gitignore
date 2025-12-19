@@ -1,0 +1,6 @@
+.env
+__pycache__/
+*.pyc
+clapenv/
+node_modules/
+data/faiss.index
