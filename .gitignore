@@ -1,6 +1,47 @@
+# Environment & secrets
 .env
+.env.*
+*.env
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+*.log
+.Python
+.pytest_cache/
+.mypy_cache/
+
+# Virtual environments
 clapenv/
+venv/
+.env/
+.venv/
+
+# Jupyter / notebooks
+.ipynb_checkpoints/
+
+# Node / frontend
 node_modules/
-data/faiss.index
+dist/
+build/
+
+# Vite
+frontend/node_modules/
+frontend/dist/
+
+# FAISS / data artifacts
+backend/data/faiss.index
+backend/data/*.index
+backend/data/*.bin
+backend/data/*.npy
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
