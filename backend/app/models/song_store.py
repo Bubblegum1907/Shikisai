@@ -7,17 +7,13 @@ from typing import List, Dict, Optional
 
 from app.utils.color_to_text import color_to_emotion
 
-# -------------------------
 # Fixed dimensions
-# -------------------------
 TEXT_DIM = 512
 AUDIO_DIM = 512
 VAD_DIM = 3
 FINAL_DIM = TEXT_DIM + AUDIO_DIM + VAD_DIM  # 1027
 
-# -------------------------
 # SongStore
-# -------------------------
 class SongStore:
     """
     FAISS-backed store for 1027-d song vectors (512 text + 512 audio + 3 VAD).
@@ -40,9 +36,7 @@ class SongStore:
         self.vectors_path = os.path.join(data_dir, "song_vectors.npy")
         self.meta_path = os.path.join(data_dir, "song_metadata.json")
 
-    # -------------------------
     # Helpers: clean text embedding to 512 dims
-    # -------------------------
     def _extract_embedding_from_obj(self, obj):
         """
         Accept different CLAP outputs:
@@ -78,9 +72,7 @@ class SongStore:
             pad = np.zeros(TEXT_DIM - arr.size, dtype=np.float32)
             return np.concatenate([arr.astype(np.float32), pad])
 
-    # -------------------------
     # Build full 1027-d vector
-    # -------------------------
     def _make_song_vector(self, text_output) -> Optional[np.ndarray]:
         """
         Convert CLAP text output (whatever it is) into a strict 1027-d normalized vector.
@@ -97,9 +89,7 @@ class SongStore:
         norm = np.linalg.norm(vec) + 1e-9
         return vec / norm
 
-    # -------------------------
     # Add Spotify tracks
-    # -------------------------
     def add_spotify_tracks(self, tracks: List[Dict], color_hex: Optional[str] = None) -> int:
         """
         Accepts a list of simplified track dicts (from spotify_fetcher).
@@ -116,7 +106,7 @@ class SongStore:
         encoded_failures = 0
 
         for i, t in enumerate(tracks):
-            # Robust spotify_id extraction (playlist items, direct items, varied shapes)
+            # Spotify_id extraction
             spotify_id = (
                 t.get("spotify_id")
                 or t.get("id")
@@ -128,8 +118,6 @@ class SongStore:
                 skipped += 1
                 continue
             if spotify_id in self.seen_ids:
-                # duplicate
-                # print(f"[SongStore] SKIP#{i}: already seen {spotify_id}")
                 continue
 
             # Normalize artists list: accept both list of names or list of objects
@@ -142,7 +130,7 @@ class SongStore:
             title = t.get("title") or t.get("name") or (t.get("track") or {}).get("name") or ""
             genres = t.get("artist_genres") or t.get("genres") or []
 
-            # Mood injection (optional)
+            # Mood injection
             if color_hex:
                 mood = color_to_emotion(color_hex)
                 mood_line = f" This song relates to emotions like {mood}."
@@ -185,14 +173,12 @@ class SongStore:
             self.vectors = new_vecs
             self.metadata = new_meta
         else:
-            # verify dims and pad/trim if necessary (shouldn't be needed)
+            # verify dims and pad/trim
             if self.vectors.shape[1] != new_vecs.shape[1]:
-                # try to realign by trimming/padding existing or new vectors
                 expected = self.dim
                 existing_d = self.vectors.shape[1]
                 new_d = new_vecs.shape[1]
                 if existing_d != expected:
-                    # attempt to pad/truncate existing
                     if existing_d > expected:
                         self.vectors = self.vectors[:, :expected]
                     else:
@@ -220,9 +206,7 @@ class SongStore:
         print(f"[SongStore] Added {added} new vectors (skipped={skipped}, encode_failures={encoded_failures})")
         return added
 
-    # -------------------------
     # Optional: build from local audio files (simple placeholder)
-    # -------------------------
     def build_from_local(self, audio_dir: str):
         """
         Simple helper that looks for audio files and encodes filenames + metadata to text vectors.
@@ -248,10 +232,8 @@ class SongStore:
             })
 
         return self.add_spotify_tracks(tracks)
-
-    # -------------------------
+        
     # FAISS build / load / search
-    # -------------------------
     def _build_faiss(self):
         if self.vectors is None or self.vectors.shape[0] == 0:
             raise RuntimeError("No vectors to build FAISS index.")
