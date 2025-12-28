@@ -1,4 +1,3 @@
-# app/models/user_profile.py
 import numpy as np
 
 class UserProfile:
