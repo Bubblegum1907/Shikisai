@@ -253,7 +253,6 @@ def recommend_hybrid(
 
     df2 = df_subset.copy() if df_subset is not None else df.copy()
 
-    # HARD OST / INSTRUMENTAL PURGE
     blacklist_pattern = "|".join(BLACKLIST_KEYWORDS)
 
     text_all = (
@@ -297,7 +296,6 @@ def recommend_hybrid(
     }.get(intent, 0.45)
 
     df2 = df2[emotion_dist < cutoff]
-
      
     # CLAP SIMILARITY
     clap_sim_all = cosine_sim_np(query_embed)
@@ -315,9 +313,7 @@ def recommend_hybrid(
         + w_energy_pref * (1 - abs(df2["energy"] - a))
     )
 
-    # --------------------------------------------------
-    # USER TASTE BIAS (gentle, additive)
-    # --------------------------------------------------
+    # USER TASTE BIAS
     if user_taste:
         top_genres = set(user_taste.get("top_genres", []))
 
@@ -338,9 +334,7 @@ def recommend_hybrid(
             # small but meaningful boost
             df2.loc[taste_mask, "score"] += 0.35
 
-    # --------------------------------------------------
     # HARD OST / THEME PENALTY
-    # --------------------------------------------------
     theme_terms = [
         "theme", "title theme", "main theme",
         "file select", "soundtrack", "ost",
@@ -363,9 +357,6 @@ def recommend_hybrid(
     # penalize heavy instrumentals (but don't kill vocals)
     df2["score"] -= 0.35 * df2["instrumentalness"]
 
-
-
-
     # popularity bias
     df2["score"] += 0.15 * df2["pop_norm"]
 
@@ -379,7 +370,6 @@ def recommend_hybrid(
     df2["score"] += 0.35 * neutral_dist
 
     # INTENT SHAPING
-    # shared shaping
     df2["score"] += cfg["energy_bias"] * df2["energy"]
     df2["score"] += cfg["vocal_boost"] * df2["speechiness"]
     df2["score"] -= cfg["instrumental_penalty"] * df2["instrumentalness"]
