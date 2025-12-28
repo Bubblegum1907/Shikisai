@@ -21,18 +21,16 @@ from app.utils.local_recommender import recommend_hybrid
 
 USER_TASTE = {}
 
-# -----------------------------------------------------
+
 # Load .env
-# -----------------------------------------------------
+
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 
 print("Loading .env from:", ENV_PATH)
 load_dotenv(dotenv_path=ENV_PATH)
 
-# -----------------------------------------------------
 # App + Singletons
-# -----------------------------------------------------
 app = FastAPI(title="Shikisai Recommender")
 
 app.add_middleware(
@@ -53,9 +51,7 @@ spotify_fetcher = SpotifyFetcher()
 
 store = SongStore(clap=clap)
 
-# -----------------------------------------------------
 # Startup
-# -----------------------------------------------------
 @app.on_event("startup")
 def startup_event():
     try:
@@ -64,9 +60,7 @@ def startup_event():
     except Exception as e:
         print("No FAISS index found — will build on demand.", e)
 
-# -----------------------------------------------------
 # Spotify OAuth
-# -----------------------------------------------------
 @app.get("/auth/login")
 def auth_login():
     url = spotify_auth.get_authorize_url()
@@ -85,9 +79,7 @@ def auth_callback(code: str | None = None):
     )
 
 
-# -----------------------------------------------------
 # Build Index from Spotify
-# -----------------------------------------------------
 class BuildSpotifyPayload(BaseModel):
     token: str
     fetch_playlists: bool = True
@@ -122,27 +114,18 @@ def build_index_spotify(payload: BuildSpotifyPayload):
 def recommend_options():
     return {}
 
-# -----------------------------------------------------
 # Recommend Endpoint (1027-D)
-# -----------------------------------------------------
-
 @app.get("/recommend")
 def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = None):
     try:
-        # ----------------------------
         # Handle preflight / empty call
-        # ----------------------------
         if not hex:
             return {"ok": True}
 
-        # ----------------------------
         # Normalize hex
-        # ----------------------------
         hex_color = hex.strip()
 
-        # ----------------------------
-        # Color → prompt + VAD
-        # ----------------------------
+        # Color -> prompt + VAD
         prompt, vad_vals = color_to_text_prompt(hex_color)
         print("PROMPT:", prompt)
 
@@ -151,9 +134,7 @@ def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = Non
         else:
             v, a = 0.5, 0.5
 
-        # ----------------------------
-        # Encode prompt → CLAP
-        # ----------------------------
+        # Encode prompt -> CLAP
         text_emb = clap.encode_text(prompt)
         text_emb = np.asarray(text_emb, dtype=np.float32)
 
@@ -163,9 +144,7 @@ def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = Non
             pad = np.zeros(512 - text_emb.size, dtype=np.float32)
             text_emb = np.concatenate([text_emb, pad])
 
-        # ----------------------------
         # Build 1027-D vector
-        # ----------------------------
         audio_emb = np.zeros(512, dtype=np.float32)
         vad_emb = np.zeros(3, dtype=np.float32)
 
