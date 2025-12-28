@@ -1,7 +1,7 @@
 # app/utils/emotion_utils.py
 import numpy as np
 
-# Mini VAD dictionary (expand later if needed)
+# Mini VAD dictionary
 VAD_MAP = {
     "anger": (0.2, 0.9, 0.6),
     "aggressive": (0.1, 0.9, 0.7),
