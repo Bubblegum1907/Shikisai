@@ -2,7 +2,7 @@ import json
 import os
 from .color_utils import hex_to_lab
 
-# Go up THREE levels: utils → app → backend
+# Go up THREE levels: utils -> app -> backend
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 PALETTE_PATH = os.path.join(DATA_DIR, "colors and feelings.json")
@@ -23,7 +23,7 @@ def load_palette():
         e2 = (c.get("emotion2") or "").strip()
         hex_code = (c.get("hex") or "").strip()
 
-        # Convert hex → LAB
+        # Convert hex -> LAB
         lab_value = hex_to_lab(hex_code)
         if lab_value is None:
             lab_value = (50, 0, 0)  # fallback
