@@ -15,7 +15,7 @@ Build my_tracks_with_clap.csv from:
 Output: backend/data/my_tracks_with_clap.csv
 """
 
-ROOT = Path(__file__).resolve().parents[2]  # project root .. adjust if needed
+ROOT = Path(__file__).resolve().parents[2] 
 BACKEND = ROOT / "backend"
 DATA_DIR = BACKEND / "data"
 SNG_META = BACKEND / "data" / "song_metadata.json"
@@ -25,10 +25,7 @@ OUT_CSV = DATA_DIR / "my_tracks_with_clap.csv"
 def safe_load_metadata(path):
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
-    # metadata might be a dict {id: {...}} or a list [{...}, ...]
     if isinstance(data, dict):
-        # convert to list preserving values (best-effort)
-        # if dict values are metadata objects keyed by index, try to order by key if numeric
         try:
             keys = sorted(data.keys(), key=lambda k: int(k) if str(k).isdigit() else k)
             return [data[k] for k in keys]
@@ -55,8 +52,6 @@ def ensure_fields(meta):
     }
 
 def vector_to_str(vec: np.ndarray):
-    # produce a Python-list-looking string like "[0.123, 0.456, ...]"
-    # Make sure it's a list of floats; ast.literal_eval on this string will parse it fine
     return json.dumps(vec.astype(float).tolist(), ensure_ascii=False)
 
 def main():
@@ -115,7 +110,7 @@ def main():
             "name": nm["name"],
             "artists": nm["artists"],
             "genres": nm["genres"],
-            # IMPORTANT: store embedding as a string that literal_eval can parse
+            # Store embedding as a string that literal_eval can parse
             "clap_embed": vector_to_str(np.array(vec, dtype=np.float32)),
             "valence": float(valence),
             "energy": float(energy),
@@ -130,13 +125,11 @@ def main():
     # ensure data dir exists
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Save CSV (index=False)
+    # Save CSV
     df.to_csv(OUT_CSV, index=False, encoding="utf-8")
     print("Wrote CSV:", OUT_CSV)
     print("Rows written:", len(df))
 
-    # Quick sanity checks
-    # parse first embedding via ast.literal_eval (simulate safe_parse_embed)
     import ast
     sample = df.loc[0, "clap_embed"]
     parsed = ast.literal_eval(sample)
