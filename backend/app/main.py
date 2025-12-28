@@ -21,9 +21,7 @@ from app.utils.local_recommender import recommend_hybrid
 
 USER_TASTE = {}
 
-
 # Load .env
-
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 ENV_PATH = os.path.join(BASE_DIR, ".env")
 
