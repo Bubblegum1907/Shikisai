@@ -314,7 +314,7 @@ def recommend_hybrid(
     )
 
     # USER TASTE BIAS
-    if user_taste:
+    if user_taste is not None:
         top_genres = set(user_taste.get("top_genres", []))
 
         if top_genres:

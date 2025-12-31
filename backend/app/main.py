@@ -17,6 +17,7 @@ from app.utils.color_to_text import color_to_text_prompt
 from app.utils.spotify_auth import SpotifyAuth
 from app.utils.spotify_fetch import SpotifyFetcher
 from app.models.song_store import SongStore
+from app.models.user_profile import UserProfile
 from app.utils.local_recommender import recommend_hybrid
 
 USER_TASTE = {}
@@ -48,6 +49,11 @@ spotify_auth = SpotifyAuth()
 spotify_fetcher = SpotifyFetcher()
 
 store = SongStore(clap=clap)
+
+user_profile = UserProfile(
+    spotify_auth=spotify_auth,
+    store=store
+)
 
 # Startup
 @app.on_event("startup")
@@ -191,3 +197,4 @@ def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = Non
             status_code=500,
             detail=f"Recommendation failed: {str(e)}"
         )
+    
