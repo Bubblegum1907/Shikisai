@@ -6,15 +6,18 @@ export default function Callback() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const token = params.get("token");
 
-    if (!token) {
-      console.error("No token received");
+    const token = params.get("token");
+    const refreshToken = params.get("refresh_token");
+
+    if (!token || !refreshToken) {
+      console.error("Missing Spotify tokens");
       navigate("/");
       return;
     }
 
     localStorage.setItem("spotify_token", token);
+    localStorage.setItem("spotify_refresh_token", refreshToken);
     localStorage.setItem("spotify_connected", "true");
 
     navigate("/");

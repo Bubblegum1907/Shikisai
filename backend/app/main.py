@@ -78,8 +78,18 @@ def auth_callback(code: str | None = None):
 
     token_info = spotify_auth.exchange_code_for_token(code)
 
+    access_token = token_info.get("access_token")
+    refresh_token = token_info.get("refresh_token")
+
+    if not access_token or not refresh_token:
+        raise HTTPException(400, "Failed to retrieve Spotify tokens")
+
     return RedirectResponse(
-        url=f"http://127.0.0.1:8080/callback?token={token_info['access_token']}"
+        url=(
+            "http://127.0.0.1:8080/callback"
+            f"?token={access_token}"
+            f"&refresh_token={refresh_token}"
+        )
     )
 
 
@@ -120,7 +130,7 @@ def recommend_options():
 
 # Recommend Endpoint (1027-D)
 @app.get("/recommend")
-def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = None):
+def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = None, refresh_token: Optional[str] = None):
     try:
         # Handle preflight / empty call
         if not hex:
@@ -159,18 +169,14 @@ def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = Non
         _ = store.search(query_vec, k=200)
 
         taste = None
-        if token:
+        if token and refresh_token:
             try:
-                tracks = spotify_fetcher.fetch_tracks_from_user(
+                taste = spotify_fetcher.get_user_taste_profile(
                     access_token=token,
-                    fetch_playlists=False,
-                    fetch_saved=False,
-                    fetch_top=True,
-                    max_per_source=30
+                    refresh_token=refresh_token
                 )
-                taste = spotify_fetcher.build_taste_from_tracks(tracks)
             except Exception as e:
-                print("Taste rebuild failed:", e)
+                print("Taste fetch failed:", e)
 
         print("RECOMMEND TOKEN:", token)
         print("USING TASTE:", taste)

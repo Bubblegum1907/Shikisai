@@ -1,5 +1,6 @@
 # app/utils/spotify_fetch.py
 from typing import List, Dict
+from spotipy.exceptions import SpotifyException
 from .spotify_auth import SpotifyAuth
 import spotipy
 import time
@@ -11,6 +12,19 @@ class SpotifyFetcher:
     """
     def __init__(self):
         self.auth = SpotifyAuth()
+
+    def _with_refresh(self, access_token, refresh_token, fn):
+        sp = self.auth.get_spotify_client(access_token)
+        try:
+            return fn(sp)
+        except SpotifyException as e:
+            if e.http_status == 401:
+                print("🔁 Refreshing Spotify token")
+                new_token = self.auth.refresh_access_token(refresh_token)
+                sp = self.auth.get_spotify_client(new_token)
+                return fn(sp)
+            else:
+                raise
 
     def _safe_split_artists(self, artist_objs):
         return [a.get("name") for a in artist_objs] if artist_objs else []
@@ -115,38 +129,59 @@ class SpotifyFetcher:
 
         return tags
     
-    def get_user_taste_profile(self, access_token: str, limit=50):
-        sp = self.auth.get_spotify_client(access_token)
+    def get_user_taste_profile(self, access_token: str, refresh_token: str, limit=50):
+        """
+        Builds a lightweight taste profile from the user's top tracks.
+        Automatically refreshes Spotify token if it expires.
+        """
 
-        # 1) fetch user's top tracks
-        top = sp.current_user_top_tracks(
-            limit=min(limit, 50),
-            time_range="medium_term"
-        )
+        # Fetch user's top tracks (with refresh support)
+        try:
+            top = self._with_refresh(
+                access_token,
+                refresh_token,
+                lambda sp: sp.current_user_top_tracks(
+                    limit=min(limit, 50),
+                    time_range="medium_term"
+                )
+            )
+        except Exception as e:
+            print("top tracks fetch failed:", e)
+            return None
+
         items = top.get("items", [])
         if not items:
             return None
 
-        track_ids = [t["id"] for t in items if t.get("id")]
+        track_ids = [t.get("id") for t in items if t.get("id")]
         if not track_ids:
             return None
 
-        # 2) fetch audio features
+        # Fetch audio features
         feats = []
 
-        for tid in track_ids:
+        # Spotify allows max 100 IDs per request
+        def chunks(lst, n=50):
+            for i in range(0, len(lst), n):
+                yield lst[i:i + n]
+
+        for chunk in chunks(track_ids, 50):
             try:
-                f = sp.audio_features([tid])[0]
-                if f:
-                    feats.append(f)
-                time.sleep(0.05)  # gentle rate-limit
+                chunk_feats = self._with_refresh(
+                    access_token,
+                    refresh_token,
+                    lambda sp: sp.audio_features(tracks=chunk)
+                )
+                feats.extend([f for f in chunk_feats if f])
             except Exception as e:
-                print("audio feature skipped:", tid)
+                print("audio features chunk skipped:", e)
 
         if not feats:
+            print("No audio features available — falling back to non-audio taste")
             return None
 
-        # 3) average selected features
+
+        # Average selected features
         def avg(key):
             vals = [f[key] for f in feats if f.get(key) is not None]
             return sum(vals) / len(vals) if vals else None
@@ -158,6 +193,7 @@ class SpotifyFetcher:
             "danceability": avg("danceability"),
             "tempo": avg("tempo"),
         }
+
     
     def build_taste_from_tracks(self, tracks):
         if not tracks:

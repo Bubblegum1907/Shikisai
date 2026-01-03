@@ -2,6 +2,7 @@ import os
 from dotenv import load_dotenv
 from spotipy.oauth2 import SpotifyOAuth
 import spotipy
+import requests
 
 load_dotenv()
 
@@ -32,3 +33,7 @@ class SpotifyAuth:
 
     def get_spotify_client(self, access_token: str):
         return spotipy.Spotify(auth=access_token)
+
+    def refresh_access_token(self, refresh_token):
+        token_info = self.oauth.refresh_access_token(refresh_token)
+        return token_info["access_token"]
