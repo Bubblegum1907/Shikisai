@@ -23,7 +23,13 @@ class ClapEncoder:
 
     def encode_text(self, text: str):
         """Return a 1027-dim embedding (1024 + VAD values)."""
-        inputs = self.processor(text=text, return_tensors="pt").to(self.device)
+        inputs = self.processor(
+            text=text,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=512
+        ).to(self.device)
 
         with torch.no_grad():
             outputs = self.model.get_text_features(**inputs)

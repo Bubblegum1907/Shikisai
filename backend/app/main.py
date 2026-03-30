@@ -1,99 +1,122 @@
-print("### FASTAPI APP WITH CORS IS RUNNING ###")
-
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import RedirectResponse, JSONResponse, Response
-from pydantic import BaseModel
-from dotenv import load_dotenv
-from fastapi.middleware.cors import CORSMiddleware
-from typing import Optional
-from urllib.parse import urlencode
-
 import os
+import math
 import traceback
 import numpy as np
+from typing import Optional
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 
-from app.utils.clap_encoder import ClapEncoder
-from app.utils.color_to_text import color_to_text_prompt
-from app.utils.spotify_auth import SpotifyAuth
-from app.utils.spotify_fetch import SpotifyFetcher
-from app.models.song_store import SongStore
-from app.models.user_profile import UserProfile
-from app.utils.local_recommender import recommend_hybrid
+# Internal Utils
+from .utils.clap_encoder import ClapEncoder
+from .utils.spotify_auth import SpotifyAuth
+from .utils.spotify_fetch import SpotifyFetcher
+from .utils.palette_utils import load_palette 
+from .utils.color_utils import hex_to_lab
+from .utils.local_recommender import recommend_hybrid
+from .models.song_store import SongStore
 
-USER_TASTE = {}
-
-# Load .env
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-ENV_PATH = os.path.join(BASE_DIR, ".env")
-
-print("Loading .env from:", ENV_PATH)
-load_dotenv(dotenv_path=ENV_PATH)
-
-# App + Singletons
 app = FastAPI(title="Shikisai Recommender")
 
+# --- MIDDLEWARE ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",  # Vite dev server
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8080", "http://127.0.0.1:8080"],
     allow_credentials=True,
-    allow_methods=["*"],  # IMPORTANT: allows OPTIONS, POST, etc.
+    allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
+# --- SINGLETONS ---
 clap = ClapEncoder()
 spotify_auth = SpotifyAuth()
 spotify_fetcher = SpotifyFetcher()
-
 store = SongStore(clap=clap)
+COLOR_PALETTE = load_palette()
 
-user_profile = UserProfile(
-    spotify_auth=spotify_auth,
-    store=store
-)
-
-# Startup
 @app.on_event("startup")
 def startup_event():
     try:
         store.load_index()
-        print("FAISS index loaded successfully.")
+        print(f"✅ FAISS index loaded. Ready to search {len(COLOR_PALETTE)} colors.")
     except Exception as e:
-        print("No FAISS index found — will build on demand.", e)
+        print("⚠️ No FAISS index found — will build on demand.", e)
 
-# Spotify OAuth
+# --- HELPER: COLOR MAPPING ---
+def get_color_metadata(hex_code: str):
+    """Maps a hex code to emotional prompts and VAD values using Perceptual Matching."""
+    user_hex = hex_code.strip().upper().lstrip('#')
+    
+    # 1. Exact Match Check
+    match = next((c for c in COLOR_PALETTE 
+                  if str(c.get('hex', '')).strip().lstrip('#').upper() == user_hex), None)
+    
+    # 2. Perceptual Nearest Neighbor Fallback
+    if not match:
+        try:
+            user_lab = hex_to_lab(hex_code)
+            def calculate_distance(color_obj):
+                l_diff = user_lab[0] - color_obj['lab'][0]
+                a_diff = user_lab[1] - color_obj['lab'][1]
+                b_diff = user_lab[2] - color_obj['lab'][2]
+                return math.sqrt(l_diff**2 + a_diff**2 + b_diff**2)
+            
+            match = min(COLOR_PALETTE, key=calculate_distance)
+        except Exception:
+            return "Atmospheric and balanced music.", (0.5, 0.5)
+
+    e1, e2 = match['emotion1'], match['emotion2']
+    v, a = match['vad']['valence'], match['vad']['arousal']
+    
+    prompt = (f"A professional audio recording featuring instrumentation that is {e1} and {e2}. "
+              f"The sonic texture evokes {e2}. Tailored for the visual frequency of #{user_hex}.")
+    
+    return prompt, (v, a)
+
+# --- BACKGROUND TASKS ---
+def perform_indexing(payload, fetcher, song_store):
+    try:
+        print(f"🚀 Background Indexing: Fetching tracks for token {payload.token[:10]}...")
+        tracks = fetcher.fetch_tracks_from_user(
+            access_token=payload.token,
+            fetch_playlists=payload.fetch_playlists,
+            fetch_saved=payload.fetch_saved,
+            fetch_top=payload.fetch_top,
+            max_per_source=payload.max_tracks_per_source
+        )
+        
+        if tracks:
+            n_added = song_store.add_spotify_tracks(tracks)
+            print(f"✅ Success! Indexed {n_added} user tracks into FAISS.")
+        else:
+            print("⚠️ No tracks found for this user.")
+            
+    except Exception as e:
+        print(f"❌ Background Indexing Failed: {str(e)}")
+        traceback.print_exc()
+
+# --- API ENDPOINTS ---
 @app.get("/auth/login")
 def auth_login():
-    url = spotify_auth.get_authorize_url()
-    return RedirectResponse(url)
-
+    return RedirectResponse(spotify_auth.get_authorize_url())
 
 @app.get("/auth/callback")
 def auth_callback(code: str | None = None):
-    if not code:
-        raise HTTPException(400, "Missing OAuth code")
-
-    token_info = spotify_auth.exchange_code_for_token(code)
-
-    access_token = token_info.get("access_token")
-    refresh_token = token_info.get("refresh_token")
-
-    if not access_token or not refresh_token:
-        raise HTTPException(400, "Failed to retrieve Spotify tokens")
-
-    return RedirectResponse(
-        url=(
-            "http://127.0.0.1:8080/callback"
-            f"?token={access_token}"
-            f"&refresh_token={refresh_token}"
+    if not code: raise HTTPException(400, "Missing OAuth code")
+    try:
+        # Crucial: This swaps the code for real tokens
+        token_info = spotify_auth.oauth.get_access_token(code)
+        access_token = token_info.get("access_token")
+        refresh_token = token_info.get("refresh_token")
+        
+        # Redirect back to the FRONTEND with the tokens
+        return RedirectResponse(
+            url=f"http://127.0.0.1:8080/callback?token={access_token}&refresh_token={refresh_token}"
         )
-    )
+    except Exception as e:
+        raise HTTPException(400, f"Token exchange failed: {str(e)}")
 
-
-# Build Index from Spotify
 class BuildSpotifyPayload(BaseModel):
     token: str
     fetch_playlists: bool = True
@@ -101,106 +124,54 @@ class BuildSpotifyPayload(BaseModel):
     fetch_top: bool = True
     max_tracks_per_source: int = 500
 
-
 @app.post("/build_index_spotify")
-def build_index_spotify(payload: BuildSpotifyPayload):
-    try:
-        tracks = spotify_fetcher.fetch_tracks_from_user(
-            access_token=payload.token,
-            fetch_playlists=payload.fetch_playlists,
-            fetch_saved=payload.fetch_saved,
-            fetch_top=payload.fetch_top,
-            max_per_source=payload.max_tracks_per_source,
-        )
-        print("FETCHED TRACK COUNT:", len(tracks))
+def build_index_spotify(payload: BuildSpotifyPayload, background_tasks: BackgroundTasks):
+    background_tasks.add_task(perform_indexing, payload, spotify_fetcher, store)
+    return {"status": "accepted", "message": "Taste indexing started."}
 
-        n_added = store.add_spotify_tracks(tracks)
-
-        print(f"Indexed {n_added} tracks into FAISS.")
-
-        return {"status": "ok", "n_added": n_added}
-
-    except Exception as e:
-        traceback.print_exc()
-        raise HTTPException(500, str(e))
-
-@app.options("/recommend")
-def recommend_options():
-    return {}
-
-# Recommend Endpoint (1027-D)
 @app.get("/recommend")
 def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = None, refresh_token: Optional[str] = None):
     try:
-        # Handle preflight / empty call
-        if not hex:
-            return {"ok": True}
+        if not hex: return {"ok": True}
 
-        # Normalize hex
-        hex_color = hex.strip()
+        # 1. Map Hex to Context
+        prompt, (v, a) = get_color_metadata(hex)
 
-        # Color -> prompt + VAD
-        prompt, vad_vals = color_to_text_prompt(hex_color)
-        print("PROMPT:", prompt)
+        # 2. Taste Profile
+        taste = None
+        if token:
+            try:
+                taste = spotify_fetcher.get_user_taste_profile(token, refresh_token)
+            except Exception as e:
+                print(f"⚠️ Taste fetch failed: {e}")
 
-        if vad_vals is not None and len(vad_vals) == 2:
-            v, a = vad_vals
-        else:
-            v, a = 0.5, 0.5
-
-        # Encode prompt -> CLAP
+        # 3. Vector Generation (Ensuring 512-dim match for FAISS)
         text_emb = clap.encode_text(prompt)
-        text_emb = np.asarray(text_emb, dtype=np.float32)
-
-        if text_emb.size >= 512:
+        text_emb = np.asarray(text_emb, dtype=np.float32).flatten()
+        
+        if text_emb.size > 512:
             text_emb = text_emb[:512]
         else:
-            pad = np.zeros(512 - text_emb.size, dtype=np.float32)
-            text_emb = np.concatenate([text_emb, pad])
+            text_emb = np.pad(text_emb, (0, max(0, 512 - text_emb.size)))
 
-        # Build 1027-D vector
-        audio_emb = np.zeros(512, dtype=np.float32)
-        vad_emb = np.zeros(3, dtype=np.float32)
-
-        query_vec = np.concatenate(
-            [text_emb, audio_emb, vad_emb]
-        ).astype("float32")
-
-        _ = store.search(query_vec, k=200)
-
-        taste = None
-        if token and refresh_token:
-            try:
-                taste = spotify_fetcher.get_user_taste_profile(
-                    access_token=token,
-                    refresh_token=refresh_token
-                )
-            except Exception as e:
-                print("Taste fetch failed:", e)
-
-        print("RECOMMEND TOKEN:", token)
-        print("USING TASTE:", taste)
-
+        # 4. Hybrid Retrieval
         recs = recommend_hybrid(
-            query_embed=text_emb[:512],
-            v=v,
-            a=a,
-            hex_color=hex_color,
+            query_embed=text_emb,
+            v=v, a=a,
+            hex_color=hex,
             limit=k,
-            user_taste=taste
+            user_taste=taste,
+            store=store 
         )
 
         return {
-            "hex": hex_color,
+            "hex": hex,
             "prompt": prompt,
-            "vad": {"valence": v, "arousal": a},
-            "recommendations": recs
+            "vad": {"valence": round(v, 2), "arousal": round(a, 2)},
+            "recommendations": recs,
+            "personalized": taste is not None
         }
 
     except Exception as e:
         traceback.print_exc()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Recommendation failed: {str(e)}"
-        )
-    
+        raise HTTPException(status_code=500, detail=str(e))

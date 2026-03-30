@@ -4,11 +4,47 @@ import numpy as np
 import pandas as pd
 import colorsys
 import re
+import json
+
+def normalize_text(s):
+    if not isinstance(s, str):
+        return ""
+    s = s.lower()
+    s = re.sub(r"\(.*?\)", "", s)      # remove (...) 
+    s = re.sub(r"\[.*?\]", "", s)      # remove [...]
+    s = re.sub(r"[^a-z0-9\s]", "", s)  # remove punctuation
+    s = re.sub(r"\s+", " ", s)         # normalize spaces
+    return s.strip()
+
+def make_lyrics_key(title, artist):
+    t = normalize_text(title)
+    a = normalize_text(artist)
+    if not t or not a:
+        return None
+    return f"{t}::{a}"
+
+LYRICS_EMBEDDINGS = {}
+
+LYRICS_PATH = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    "data",
+    "lyrics_embeddings.json"
+)
+
+if os.path.exists(LYRICS_PATH):
+    try:
+        with open(LYRICS_PATH, "r", encoding="utf-8") as f:
+            LYRICS_EMBEDDINGS = json.load(f)
+        print(f"[Lyrics] Loaded {len(LYRICS_EMBEDDINGS)} lyrics embeddings")
+    except Exception as e:
+        print("[Lyrics] Failed to load embeddings:", e)
+else:
+    print("[Lyrics] No lyrics_embeddings.json found")
 
 BLACKLIST_KEYWORDS = [
     "soundtrack", "ost", "original soundtrack", "theme", 
     "opening", "ending", "legend of zelda", "pokémon",
-    "final fantasy", "piano", "instrumental", "score"
+    "final fantasy", "piano", "instrumental", "score",
     "title theme", "end credits", "main theme",
     "felt piano", "piano version", "piano cover",
     "instrumental", "game music", "bgm", "sleepy piano"
@@ -67,7 +103,7 @@ df = df[df["clap_vec"].notnull()].reset_index(drop=True)
 print("After filtering invalid embeddings:", len(df))
 
 if len(df) == 0:
-    raise ValueError("No valid CLAP embeddings found — check your CSV formatting!")
+    raise ValueError("No valid CLAP embeddings found : Check your CSV formatting")
 
 # FIX NUMERICAL FIELDS
 df["valence"] = df["valence"].fillna(0.5)
@@ -93,6 +129,15 @@ def cosine_sim_np(vec):
 
     return EMB_NORM @ vec_norm
 
+def cosine_sim(a, b):
+    if a is None or b is None:
+        return None
+    a = np.asarray(a)
+    b = np.asarray(b)
+    denom = (np.linalg.norm(a) * np.linalg.norm(b))
+    if denom == 0:
+        return None
+    return float(np.dot(a, b) / denom)
 
 # COLOR → INTENT LAYER
 def hsv_from_hex(hex_color):
@@ -137,8 +182,8 @@ INTENT_CONFIG = {
     "dark_moody": {
         "vocal_boost": 0.2,
         "instrumental_penalty": 0.4,
-        "energy_bias": -0.15,
-        "valence_bias": -0.4,
+        "energy_bias": -0.4,
+        "valence_bias": -0.6,
         "clap_weight": 0.85,
     },
     "bold_confident": {
@@ -221,6 +266,7 @@ def recommend_hybrid(
     user_taste=None,
     preferences=None,
     limit=10,
+    store=None,
     df_subset=None
 ):
 
@@ -290,28 +336,69 @@ def recommend_hybrid(
     df2["emotion_score"] = np.exp(-3.5 * emotion_dist)
 
     cutoff = {
-        "warm_soft": 0.45,
-        "cool_soft": 0.42,
+        "warm_soft": 0.30,
+        "cool_soft": 0.30,
         "dark_moody": 0.40
-    }.get(intent, 0.45)
+    }.get(intent, 0.40)
 
     df2 = df2[emotion_dist < cutoff]
      
     # CLAP SIMILARITY
     clap_sim_all = cosine_sim_np(query_embed)
     df2["clap_sim"] = clap_sim_all[df2.index]
+
+    df2["lyrics_sim"] = 0.0  # initialize
+
+    for idx, row in df2.iterrows():
+        title = row["name"]
+        artists = row["artists"]
+
+        # Convert string list → actual list
+        if isinstance(artists, str) and artists.startswith("["):
+            try:
+                artists = ast.literal_eval(artists)
+            except:
+                artists = []
+
+        # Handle cases
+        if isinstance(artists, list) and len(artists) > 0:
+            artist = artists[0]
+        elif isinstance(artists, str):
+            artist = artists
+        else:
+            artist = ""
+
+        if not artist:
+            continue
         
+        key = make_lyrics_key(title, artist)
+
+        if key and key in LYRICS_EMBEDDINGS:
+            lyr_vec = np.array(LYRICS_EMBEDDINGS[key]["embedding"], dtype=np.float32)[:512]
+            sim = cosine_sim(lyr_vec, query_embed)
+
+            df2.at[idx, "lyrics_sim"] = sim if sim is not None else 0.0
+            
     # METADATA NORMALIZATION
     df2["pop_norm"] = df2["popularity"] / 100
     df2["year_norm"] = ((df2["release_year"] - 1990) / 35).clip(0, 1)
-      
+
+    print("Non-zero lyrics count:", (df2["lyrics_sim"] > 0).sum())
+    print("Max lyrics sim:", df2["lyrics_sim"].max())  
+    
     # BASE SCORE (SIMPLIFIED + STABLE)
     df2["score"] = (
         w_clap * df2["clap_sim"]
+        + 0.6 * df2["lyrics_sim"]
         + w_emo * df2["emotion_score"]
         + w_mod * df2["year_norm"]
         + w_energy_pref * (1 - abs(df2["energy"] - a))
     )
+
+    df2["lyrics_sim"] = (df2["lyrics_sim"] + 1) / 2
+
+    df2["has_lyrics"] = df2["lyrics_sim"] > 0
+    df2 = df2[emotion_dist < cutoff]
 
     # USER TASTE BIAS
     if user_taste is not None:
@@ -367,7 +454,7 @@ def recommend_hybrid(
         (df2["valence"] - NEUTRAL_V) ** 2 +
         (df2["energy"] - NEUTRAL_A) ** 2
     )
-    df2["score"] += 0.35 * neutral_dist
+    # df2["score"] += 0.35 * neutral_dist
 
     # INTENT SHAPING
     df2["score"] += cfg["energy_bias"] * df2["energy"]
@@ -390,6 +477,9 @@ def recommend_hybrid(
         # deep / introspective
         df2["score"] -= 0.2 * df2["energy"]
         df2["score"] += 0.3 * (1 - df2["valence"])     # sadness allowed
+
+    if "soft" in intent or "dark" in intent:
+        df2.loc[df2["energy"] > 0.55, "score"] -= 1.5
 
     # ROMANCE PRIOR (ONLY WHEN NEEDED)
     ROMANCE_TERMS = [
@@ -432,6 +522,7 @@ def recommend_hybrid(
 
     df2 = df2[~(is_game_ost & ~is_allowed)]
     if user_profile["avoid_game_ost"]:
+        is_game_ost = is_game_ost.reindex(df2.index, fill_value=False)
         df2 = df2[~is_game_ost]
 
     # CLASSICAL DETECTION 
@@ -469,7 +560,10 @@ def recommend_hybrid(
 
     df2 = df2.sample(frac=1, random_state=None)
 
-    # FINAL RETURN
+    lyrics_df = df2[df2["lyrics_sim"] > 0].sort_values("score", ascending=False).head(5)
+    normal_df = df2.sort_values("score", ascending=False).head(15)
+
+    df2 = pd.concat([lyrics_df, normal_df]).drop_duplicates(subset=["id"])    # FINAL RETURN
     top = df2.sort_values("score", ascending=False).head(limit * 2)
 
     seen = set()
