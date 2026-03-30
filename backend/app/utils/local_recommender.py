@@ -10,10 +10,10 @@ def normalize_text(s):
     if not isinstance(s, str):
         return ""
     s = s.lower()
-    s = re.sub(r"\(.*?\)", "", s)      # remove (...) 
-    s = re.sub(r"\[.*?\]", "", s)      # remove [...]
-    s = re.sub(r"[^a-z0-9\s]", "", s)  # remove punctuation
-    s = re.sub(r"\s+", " ", s)         # normalize spaces
+    s = re.sub(r"\(.*?\)", "", s)     
+    s = re.sub(r"\[.*?\]", "", s)   
+    s = re.sub(r"[^a-z0-9\s]", "", s)
+    s = re.sub(r"\s+", " ", s)         
     return s.strip()
 
 def make_lyrics_key(title, artist):
@@ -50,7 +50,6 @@ BLACKLIST_KEYWORDS = [
     "instrumental", "game music", "bgm", "sleepy piano"
 ]
 
-# LOAD DATASET
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(BASE_DIR, "data")
 FILE_PATH = os.path.join(DATA_DIR, "my_tracks_with_clap.csv")
@@ -58,7 +57,6 @@ FILE_PATH = os.path.join(DATA_DIR, "my_tracks_with_clap.csv")
 df = pd.read_csv(FILE_PATH)
 
 
-# SAFE UTILITIES
 def parse_list(x):
     if isinstance(x, str) and x.startswith("["):
         try:
@@ -89,7 +87,6 @@ def safe_parse_embed(x):
     return None
 
 
-# FIX GENRES + EMBEDDINGS
 if "genres" not in df.columns:
     df["genres"] = [[] for _ in range(len(df))]
 else:
@@ -105,7 +102,6 @@ print("After filtering invalid embeddings:", len(df))
 if len(df) == 0:
     raise ValueError("No valid CLAP embeddings found : Check your CSV formatting")
 
-# FIX NUMERICAL FIELDS
 df["valence"] = df["valence"].fillna(0.5)
 df["energy"] = df["energy"].fillna(0.5)
 df["instrumentalness"] = df["instrumentalness"].fillna(0.0)
@@ -113,9 +109,8 @@ df["speechiness"] = df["speechiness"].fillna(0.05)
 df["popularity"] = df["popularity"].fillna(0.0)
 df["release_year"] = df["release_year"].fillna(2010).astype(int)
 
-# PRECOMPUTE NORMALIZED EMBEDDING MATRIX
 EMB_MATRIX = np.vstack(df["clap_vec"].values).astype(np.float32)
-EMB_MATRIX = EMB_MATRIX[:, :512]   # 🔒 FIX
+EMB_MATRIX = EMB_MATRIX[:, :512]
 EMB_NORM = EMB_MATRIX / (np.linalg.norm(EMB_MATRIX, axis=1, keepdims=True) + 1e-9)
 
 
@@ -139,7 +134,6 @@ def cosine_sim(a, b):
         return None
     return float(np.dot(a, b) / denom)
 
-# COLOR → INTENT LAYER
 def hsv_from_hex(hex_color):
     if not hex_color:
         return 0, 0, 0.5
@@ -230,7 +224,7 @@ def color_to_intent(hex_color):
     if s < 0.2 and v > 0.7:
         return "warm_soft"
 
-    if 70 <= h <= 150 and s > 0.4:
+    if 45 <= h <= 70 and s > 0.4:
         return "bright_playful"
 
     if 200 <= h <= 260 and s < 0.4:
@@ -257,11 +251,11 @@ def color_to_intent(hex_color):
     return "cool_soft"
 
 
-# FINAL HYBRID RECOMMENDER
 def recommend_hybrid(
     query_embed,
     v,
     a,
+    vibe_vector=None,
     hex_color=None,
     user_taste=None,
     preferences=None,
@@ -277,11 +271,9 @@ def recommend_hybrid(
         "k-drama", "kdrama", "c-drama", "cdrama", "j-drama",
         "电视剧", "動畫", "アニメ", "片尾曲", "插曲"
     ]
-    # SAFETY
     query_embed = np.asarray(query_embed, dtype=np.float32)[:512]
     assert query_embed.shape[0] == 512, f"BAD QUERY EMBED SHAPE: {query_embed.shape}"
 
-    # USER PROFILE
     user_profile = {
         "energy_pref": 0.3,
         "instrumental_pref": 0.2,
@@ -320,13 +312,17 @@ def recommend_hybrid(
     intent = color_to_intent(hex_color)
     cfg = INTENT_CONFIG[intent]
 
+    if vibe_vector is not None:
+        vibe_vector_norm = vibe_vector / (np.linalg.norm(vibe_vector) + 1e-9)
+        df2["vibe_sim"] = EMB_NORM @ vibe_vector_norm[:512]
+    else:
+        df2["vibe_sim"] = 0.5  # neutral default
 
     w_clap = preferences["w_clap"] * cfg["clap_weight"]
     w_emo = preferences["w_emotion"]
     w_mod = preferences["w_modern"]
     w_energy_pref = preferences["w_energy_pref"]
 
-    # EMOTION SCORE
     a = 0.7 * a + 0.3 * user_profile["energy_pref"]
     emotion_dist = np.sqrt(
         (df2["valence"] - v) ** 2 +
@@ -343,24 +339,21 @@ def recommend_hybrid(
 
     df2 = df2[emotion_dist < cutoff]
      
-    # CLAP SIMILARITY
     clap_sim_all = cosine_sim_np(query_embed)
     df2["clap_sim"] = clap_sim_all[df2.index]
 
-    df2["lyrics_sim"] = 0.0  # initialize
+    df2["lyrics_sim"] = 0.0
 
     for idx, row in df2.iterrows():
         title = row["name"]
         artists = row["artists"]
 
-        # Convert string list → actual list
         if isinstance(artists, str) and artists.startswith("["):
             try:
                 artists = ast.literal_eval(artists)
             except:
                 artists = []
 
-        # Handle cases
         if isinstance(artists, list) and len(artists) > 0:
             artist = artists[0]
         elif isinstance(artists, str):
@@ -379,14 +372,12 @@ def recommend_hybrid(
 
             df2.at[idx, "lyrics_sim"] = sim if sim is not None else 0.0
             
-    # METADATA NORMALIZATION
     df2["pop_norm"] = df2["popularity"] / 100
     df2["year_norm"] = ((df2["release_year"] - 1990) / 35).clip(0, 1)
 
     print("Non-zero lyrics count:", (df2["lyrics_sim"] > 0).sum())
     print("Max lyrics sim:", df2["lyrics_sim"].max())  
     
-    # BASE SCORE (SIMPLIFIED + STABLE)
     df2["score"] = (
         w_clap * df2["clap_sim"]
         + 0.6 * df2["lyrics_sim"]
@@ -400,7 +391,6 @@ def recommend_hybrid(
     df2["has_lyrics"] = df2["lyrics_sim"] > 0
     df2 = df2[emotion_dist < cutoff]
 
-    # USER TASTE BIAS
     if user_taste is not None:
         top_genres = set(user_taste.get("top_genres", []))
 
@@ -418,10 +408,8 @@ def recommend_hybrid(
                 na=False
             )
 
-            # small but meaningful boost
             df2.loc[taste_mask, "score"] += 0.35
 
-    # HARD OST / THEME PENALTY
     theme_terms = [
         "theme", "title theme", "main theme",
         "file select", "soundtrack", "ost",
@@ -441,10 +429,8 @@ def recommend_hybrid(
 
     df2.loc[is_theme, "score"] -= 0.6
 
-    # penalize heavy instrumentals (but don't kill vocals)
     df2["score"] -= 0.35 * df2["instrumentalness"]
 
-    # popularity bias
     df2["score"] += 0.15 * df2["pop_norm"]
 
     NEUTRAL_V = 0.5
@@ -454,34 +440,26 @@ def recommend_hybrid(
         (df2["valence"] - NEUTRAL_V) ** 2 +
         (df2["energy"] - NEUTRAL_A) ** 2
     )
-    # df2["score"] += 0.35 * neutral_dist
 
-    # INTENT SHAPING
     df2["score"] += cfg["energy_bias"] * df2["energy"]
     df2["score"] += cfg["vocal_boost"] * df2["speechiness"]
     df2["score"] -= cfg["instrumental_penalty"] * df2["instrumentalness"]
 
-    # intent-specific constraints
     if intent == "warm_soft":
-        # baby pink / tender warmth
-        df2["score"] += 0.4 * df2["valence"]          # prefer positive emotion
-        df2["score"] -= 0.4 * df2["energy"]           # avoid urgency
-        df2["score"] -= 0.3 * (1 - df2["speechiness"])# avoid wordless music
-
+        df2["score"] += 0.4 * df2["valence"]         
+        df2["score"] -= 0.4 * df2["energy"]          
+        df2["score"] -= 0.2 * (1 - df2["speechiness"])
     elif intent == "cool_soft":
-        # lavender / calm distance
         df2["score"] -= 0.3 * df2["energy"]
-        df2["score"] += 0.1 * (1 - df2["valence"])     # allow gentle melancholy
+        df2["score"] += 0.1 * (1 - df2["valence"])   
 
     elif intent == "dark_moody":
-        # deep / introspective
         df2["score"] -= 0.2 * df2["energy"]
-        df2["score"] += 0.3 * (1 - df2["valence"])     # sadness allowed
+        df2["score"] += 0.3 * (1 - df2["valence"])
 
     if "soft" in intent or "dark" in intent:
         df2.loc[df2["energy"] > 0.55, "score"] -= 1.5
 
-    # ROMANCE PRIOR (ONLY WHEN NEEDED)
     ROMANCE_TERMS = [
         "love", "kiss", "heart", "darling",
         "fall", "you", "us", "night", "baby"
@@ -494,7 +472,6 @@ def recommend_hybrid(
     if cfg.get("romance_bias", 0) > 0:
         df2.loc[romance_mask, "score"] += cfg["romance_bias"]
 
-    # GAME OST REMOVAL
     GAME_FRANCHISES = [
         "pokemon", "pokémon", "zelda", "fire emblem",
         "final fantasy", "chrono", "kingdom hearts",
@@ -525,7 +502,6 @@ def recommend_hybrid(
         is_game_ost = is_game_ost.reindex(df2.index, fill_value=False)
         df2 = df2[~is_game_ost]
 
-    # CLASSICAL DETECTION 
     CLASSICAL_TERMS = [
         "bach", "chopin", "mozart", "beethoven",
         "prelude", "sonata", "symphony",
@@ -538,7 +514,6 @@ def recommend_hybrid(
             | frame["artists"].astype(str).str.lower().str.contains("|".join(CLASSICAL_TERMS), na=False)
         )
 
-    # STABILITY + DEDUPLICATION
     df2 = df2.reset_index(drop=True)
     df2["score"] = df2["score"].clip(lower=0)
 

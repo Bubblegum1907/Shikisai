@@ -12,9 +12,9 @@ class Recommender:
 
     def recommend(
         self,
-        query_embed,          # CLAP vector
-        valence: float,       # target valence
-        arousal: float,       # target arousal
+        query_embed,          
+        valence: float,       
+        arousal: float,      
         k: int = 10,
         preferences: Optional[Dict] = None
     ) -> List[Dict]:
@@ -24,7 +24,6 @@ class Recommender:
         """
         results = recommend_hybrid(query_embed=query_embed, v=valence, a=arousal, preferences=preferences, limit=k)
 
-        # recommend_hybrid returns items with keys: id, name, artists, external_url, ...
         mapped = []
         for idx, r in enumerate(results):
             mapped.append({

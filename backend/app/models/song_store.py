@@ -5,11 +5,10 @@ import numpy as np
 import faiss
 from typing import List, Dict, Optional
 
-# Fixed dimensions based on your architecture
 TEXT_DIM = 512
 AUDIO_DIM = 512
 VAD_DIM = 3
-FINAL_DIM = TEXT_DIM + AUDIO_DIM + VAD_DIM  # 1027
+FINAL_DIM = TEXT_DIM + AUDIO_DIM + VAD_DIM
 
 class SongStore:
     """
@@ -35,7 +34,6 @@ class SongStore:
         """Force text embedding to exactly 512 dims."""
         if raw is None: return None
         
-        # Extract array from potential dict wrapper
         if isinstance(raw, dict):
             arr = raw.get("embedding") or raw.get("vector") or raw.get("vec")
         else:
@@ -57,15 +55,12 @@ class SongStore:
         if text_emb is None:
             return None
 
-        # Placeholder for audio features (512-d)
         audio_emb = np.zeros(AUDIO_DIM, dtype=np.float32)
         
-        # Real Affective features (3-d)
         vad = np.array([v, a, d], dtype=np.float32)
 
         vec = np.concatenate([text_emb, audio_emb, vad]).astype(np.float32)
         
-        # L2 Normalization is critical for FAISS IndexFlatIP
         norm = np.linalg.norm(vec) + 1e-9
         return vec / norm
 
@@ -80,7 +75,6 @@ class SongStore:
         new_vecs = []
         new_meta = []
         
-        # Get the global emotional context for this color batch
         batch_prompt = ""
         v, a = 0.5, 0.5
         if color_hex:
@@ -96,14 +90,11 @@ class SongStore:
             artists = [a.get("name") if isinstance(a, dict) else str(a) for a in artists_raw]
             genres = t.get("artist_genres") or t.get("genres") or []
 
-            # Hybrid description: metadata + emotional prompt
             text_desc = f"Song '{title}' by {', '.join(artists)}. Genres: {', '.join(genres)}. Context: {batch_prompt}"
 
             try:
-                # 1. Encode with CLAP (Semantic)
                 text_out = self.clap.encode_text(text_desc)
                 
-                # 2. Add VAD Coordinates (Affective)
                 vec = self._make_song_vector(text_out, v=v, a=a)
                 
                 if vec is not None:
@@ -137,14 +128,12 @@ class SongStore:
         with open(self.meta_path, "w", encoding="utf-8") as f:
             json.dump(self.metadata, f, indent=2, ensure_ascii=False)
 
-        # Rebuild the searchable index
         self._build_faiss()
         return len(new_vecs)
 
     def _build_faiss(self):
         if self.vectors is None or len(self.vectors) == 0: return
         
-        # FAISS IndexFlatIP (Inner Product) works best with normalized vectors
         index = faiss.IndexFlatIP(self.dim)
         index.add(self.vectors)
         self.index = index

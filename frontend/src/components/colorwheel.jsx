@@ -1,10 +1,10 @@
-import React, { useRef, useEffect, useState } from "react";
+import React, { useRef, useEffect, useState, useMemo } from "react";
 import { motion } from "framer-motion";
+import VIBE_DATA from "../data/colors_to_feelings.json";
 
 export default function ColorWheel({ size = 420, knobSize = 28, onPick }) {
   const canvasRef = useRef(null);
   const wrapperRef = useRef(null);
-
   const lastHexRef = useRef("#FAF0F0");
 
   const [dragging, setDragging] = useState(false);
@@ -17,11 +17,18 @@ export default function ColorWheel({ size = 420, knobSize = 28, onPick }) {
 
   const dpi = window.devicePixelRatio || 1;
 
-  // DRAW COLOR WHEEL
+  // 1. Prepare Vibe Data
+  const memoizedVibes = useMemo(() => {
+    return Object.entries(VIBE_DATA).map(([hex, vibe]) => ({
+      rgb: hexToRgb(hex),
+      vibe: vibe
+    }));
+  }, []);
+
+  // 2. Draw Wheel
   useEffect(() => {
     const canvas = canvasRef.current;
     const real = size * dpi;
-
     canvas.width = real;
     canvas.height = real;
     canvas.style.width = size + "px";
@@ -30,7 +37,6 @@ export default function ColorWheel({ size = 420, knobSize = 28, onPick }) {
     const ctx = canvas.getContext("2d");
     const radius = size / 2;
     const realRadius = real / 2;
-
     const img = ctx.createImageData(real, real);
     const data = img.data;
 
@@ -68,15 +74,13 @@ export default function ColorWheel({ size = 420, knobSize = 28, onPick }) {
         data[i + 3] = 255;
       }
     }
-
     ctx.putImageData(img, 0, 0);
-  }, [size, luminance]);
+  }, [size, luminance, dpi]);
 
-  // PICK COLOR
+  // 3. Picking Logic
   const pickColor = (event) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
-
     let x, y;
 
     if (event.nativeEvent?.offsetX != null) {
@@ -93,12 +97,10 @@ export default function ColorWheel({ size = 420, knobSize = 28, onPick }) {
 
     const dx = x - size / 2;
     const dy = y - size / 2;
-
     const dist = Math.sqrt(dx * dx + dy * dy);
     const radius = size / 2;
 
-    let ndx = dx,
-      ndy = dy;
+    let ndx = dx, ndy = dy;
     if (dist > radius) {
       const s = radius / dist;
       ndx *= s;
@@ -121,15 +123,10 @@ export default function ColorWheel({ size = 420, knobSize = 28, onPick }) {
     const hex = rgbToHex(r * 255, g * 255, b * 255);
     lastHexRef.current = hex;
 
-    setSelector({
-      x: size / 2 + ndx,
-      y: size / 2 + ndy,
-      hex,
-    });
+    setSelector({ x: size / 2 + ndx, y: size / 2 + ndy, hex });
   };
 
-  
-  // DRAG LOGIC
+  // 4. Drag Lifecycle
   const startDrag = (e) => {
     setDragging(true);
     pickColor(e);
@@ -140,14 +137,12 @@ export default function ColorWheel({ size = 420, knobSize = 28, onPick }) {
     const stop = () => {
       if (!dragging) return;
       setDragging(false);
-      console.log("FINAL COLOR:", lastHexRef.current);
       onPick?.(lastHexRef.current);
-
     };
 
     window.addEventListener("mousemove", move);
     window.addEventListener("mouseup", stop);
-    window.addEventListener("touchmove", move);
+    window.addEventListener("touchmove", move, { passive: false });
     window.addEventListener("touchend", stop);
 
     return () => {
@@ -158,81 +153,100 @@ export default function ColorWheel({ size = 420, knobSize = 28, onPick }) {
     };
   }, [dragging, onPick]);
 
-  // RENDER
+  const getDetailedVibe = (currentHex) => {
+    const target = hexToRgb(currentHex);
+    let closestVibe = "";
+    let minDistance = Infinity;
+
+    for (const item of memoizedVibes) {
+      const distance = Math.sqrt(
+        Math.pow(target.r - item.rgb.r, 2) +
+        Math.pow(target.g - item.rgb.g, 2) +
+        Math.pow(target.b - item.rgb.b, 2)
+      );
+      if (distance < minDistance) {
+        minDistance = distance;
+        closestVibe = item.vibe;
+      }
+    }
+    return closestVibe;
+  };
+
   return (
-    <div style={{ display: "flex", gap: 28, alignItems: "center" }}>
-      {/* WHEEL */}
-      <div
-        ref={wrapperRef}
-        style={{
-          width: size,
-          height: size,
-          position: "relative",
-          borderRadius: "50%",
-          background: "radial-gradient(circle, #FAF0F0, #EEF7F4)",
-          boxShadow: "0 30px 80px rgba(0,0,0,0.10)",
-        }}
-      >
-        <canvas
-          ref={canvasRef}
-          onMouseDown={startDrag}
-          onTouchStart={startDrag}
+    <div style={{ display: "flex", flexDirection: "column", gap: 24, alignItems: "center" }}>
+      <div style={{ textAlign: "center", height: 40 }}> 
+        <motion.h2 
+          key={getDetailedVibe(selector.hex)}
+          initial={{ opacity: 0, y: 5 }}
+          animate={{ opacity: 1, y: 0 }}
+          style={{ 
+            margin: 0, 
+            fontSize: "1.2rem", 
+            color: selector.hex, 
+            textTransform: "uppercase", 
+            letterSpacing: "2px",
+            textShadow: "0 0 20px rgba(255,255,255,0.1)",
+            transition: "color 0.3s ease" 
+          }}
+        >
+          {getDetailedVibe(selector.hex)}
+        </motion.h2>
+      </div>
+
+      <div style={{ display: "flex", gap: 32, alignItems: "center" }}>
+        <div
+          ref={wrapperRef}
           style={{
             width: size,
             height: size,
+            position: "relative",
             borderRadius: "50%",
-            cursor: "pointer",
-            border: "4px solid rgba(250,240,240,0.9)",
+            background: "radial-gradient(circle, #FAF0F0, #EEF7F4)",
+            boxShadow: "0 30px 80px rgba(0,0,0,0.10)",
           }}
-        />
+        >
+          <canvas
+            ref={canvasRef}
+            onMouseDown={startDrag}
+            onTouchStart={startDrag}
+            style={{
+              width: size,
+              height: size,
+              borderRadius: "50%",
+              cursor: "pointer",
+              border: "4px solid rgba(250,240,240,0.9)",
+            }}
+          />
+          <motion.div
+            animate={{
+              left: selector.x - knobSize / 2,
+              top: selector.y - knobSize / 2,
+            }}
+            transition={dragging ? { duration: 0 } : { type: "spring", stiffness: 1600, damping: 100 }}
+            style={{
+              position: "absolute",
+              width: knobSize,
+              height: knobSize,
+              borderRadius: "50%",
+              background: selector.hex,
+              border: "3px solid rgba(250,240,240,0.95)",
+              pointerEvents: "none",
+              boxShadow: "0 10px 26px rgba(0,0,0,0.25)",
+            }}
+          />
+        </div>
 
-        <motion.div
-          animate={{
-            left: selector.x - knobSize / 2,
-            top: selector.y - knobSize / 2,
-          }}
-          transition={
-            dragging
-              ? { duration: 0 }
-              : { type: "spring", stiffness: 1600, damping: 100 }
-          }
-          style={{
-            position: "absolute",
-            width: knobSize,
-            height: knobSize,
-            borderRadius: "50%",
-            background: selector.hex,
-            border: "3px solid rgba(250,240,240,0.95)",
-            pointerEvents: "none",
-            boxShadow: "0 10px 26px rgba(0,0,0,0.25)",
-          }}
-        />
-      </div>
-
-      {/* LUMINANCE SLIDER */}
-      <div
-        className="glass"
-        style={{
-          height: size * 0.75,
-          width: 28,
-          borderRadius: 999,
-          padding: "10px 6px",
-        }}
-      >
-        <input
-          type="range"
-          min="0.25"
-          max="1"
-          step="0.01"
-          value={luminance}
-          onChange={(e) => setLuminance(parseFloat(e.target.value))}
-          style={{
-            writingMode: "bt-lr",
-            WebkitAppearance: "slider-vertical",
-            height: "100%",
-            width: "100%",
-          }}
-        />
+        <div className="glass" style={{ height: size * 0.75, width: 24, padding: "10px 6px", borderRadius: 20 }}>
+          <input
+            type="range"
+            min="0.25"
+            max="1"
+            step="0.01"
+            value={luminance}
+            onChange={(e) => setLuminance(parseFloat(e.target.value))}
+            style={{ writingMode: "bt-lr", WebkitAppearance: "slider-vertical", height: "100%", width: "100%" }}
+          />
+        </div>
       </div>
     </div>
   );
@@ -265,4 +279,12 @@ function rgbToHex(r, g, b) {
       .map((n) => Math.round(n).toString(16).padStart(2, "0"))
       .join("")
   ).toUpperCase();
+}
+
+function hexToRgb(hex) {
+  const cleanHex = hex.replace('#', '');
+  const r = parseInt(cleanHex.substring(0, 2), 16);
+  const g = parseInt(cleanHex.substring(2, 4), 16);
+  const b = parseInt(cleanHex.substring(4, 6), 16);
+  return { r, g, b };
 }

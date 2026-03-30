@@ -31,7 +31,6 @@ class UserProfile:
         except Exception as e:
             print("saved tracks fetch failed:", e)
 
-        # map spotify ids to store indices
         idxs = []
         id_to_idx = {}
         for i, m in enumerate(self.store.metadata):
@@ -44,7 +43,6 @@ class UserProfile:
             if sid and sid in id_to_idx:
                 idxs.append(id_to_idx[sid])
             else:
-                # fallback: title substring match
                 title = (it.get("title") or "").lower()
                 for i, m in enumerate(self.store.metadata):
                     if title in (m.get("title") or "").lower():
@@ -52,7 +50,6 @@ class UserProfile:
                         break
 
         if len(idxs) == 0:
-            # return zero vector same shape as store vectors
             return np.zeros(self.store.vectors.shape[1], dtype="float32")
 
         vecs = self.store.vectors[idxs]
