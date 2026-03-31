@@ -15,7 +15,6 @@ def rgb_to_xyz(rgb):
 
     r, g, b = map(pivot, rgb)
     
-    # Observer. = 2°, Illuminant = D65
     x = r * 0.4124 + g * 0.3576 + b * 0.1805
     y = r * 0.2126 + g * 0.7152 + b * 0.0722
     z = r * 0.0193 + g * 0.1192 + b * 0.9505
@@ -24,7 +23,6 @@ def rgb_to_xyz(rgb):
 def xyz_to_lab(xyz):
     """Converts XYZ to CIELAB."""
     x, y, z = xyz
-    # Reference white D65
     x /= 0.95047
     y /= 1.00000
     z /= 1.08883

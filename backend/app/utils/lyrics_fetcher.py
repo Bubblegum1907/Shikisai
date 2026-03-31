@@ -3,53 +3,62 @@ import json
 import time
 import re
 import requests
+import sys
+from pathlib import Path
 from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from typing import Optional
 
-_current_dir = os.path.dirname(os.path.abspath(__file__))
-_backend_root = os.path.abspath(os.path.join(_current_dir, "..", ".."))
-CACHE_PATH = os.path.join(_backend_root, "data", "lyrics_cache.json")
+# --- 1. DYNAMIC PATH SETUP (The "Vaccine") ---
+current_file = Path(__file__).resolve()
+# Assuming this script is in backend/scripts/ or backend/app/utils/
+# This finds the 'backend' root folder regardless
+backend_root = current_file.parent.parent if 'scripts' in current_file.parts else current_file.parent
+sys.path.append(str(backend_root))
 
+CACHE_PATH = backend_root / "data" / "lyrics_cache.json"
 GENIUS_SEARCH_URL = "https://api.genius.com/search"
 
 class LyricsFetcher:
     def __init__(self, sleep_time: float = 0.4):
-        load_dotenv()
+        # Explicitly load .env from the backend root
+        load_dotenv(dotenv_path=backend_root / ".env")
         
         self.sleep_time = sleep_time
-        
         self.token = os.getenv("GENIUS_ACCESS_TOKEN")
+        
         if not self.token:
-            load_dotenv(os.path.join(_backend_root, ".env"))
-            self.token = os.getenv("GENIUS_ACCESS_TOKEN")
+            raise RuntimeError(f"GENIUS_ACCESS_TOKEN not found. Check your .env at {backend_root}")
 
-        if not self.token:
-            raise RuntimeError("GENIUS_ACCESS_TOKEN not set in environment")
-
-        self.headers = {"Authorization": f"Bearer {self.token}"}
+        # Headers: Added User-Agent to prevent getting blocked during scraping
+        self.headers = {
+            "Authorization": f"Bearer {self.token}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        }
         
         self.cache = self._load_cache()
 
     def _load_cache(self):
-        if os.path.exists(CACHE_PATH):
+        if CACHE_PATH.exists():
             try:
                 with open(CACHE_PATH, "r", encoding="utf-8") as f:
                     return json.load(f)
-            except Exception:
+            except Exception as e:
+                print(f"⚠️ Cache read error: {e}")
                 return {}
         return {}
 
     def _save_cache(self):
-        os.makedirs(os.path.dirname(CACHE_PATH), exist_ok=True)
+        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(CACHE_PATH, "w", encoding="utf-8") as f:
             json.dump(self.cache, f, ensure_ascii=False, indent=2)
 
     def _normalize(self, text: str):
         text = text.lower().strip()
+        # Remove text in parentheses like "(Remastered)" or "- Live"
+        text = re.sub(r"\(.*?\)|- .*?$", "", text)
         text = re.sub(r"[^\w\s]", "", text)
-        text = re.sub(r"\s+", " ", text)
-        return text
+        return " ".join(text.split())
 
     def _cache_key(self, title: str, artist: str):
         return f"{self._normalize(title)}::{self._normalize(artist)}"
@@ -57,20 +66,25 @@ class LyricsFetcher:
     def get_lyrics(self, title: str, artist: str) -> Optional[str]:
         key = self._cache_key(title, artist)
 
-        if key in self.cache:
+        if key in self.cache and self.cache[key]:
             return self.cache[key]
 
         lyrics = self._fetch_lyrics_from_genius(title, artist)
 
+        # Only cache if we actually found something
         if lyrics:
             self.cache[key] = lyrics
             self._save_cache()
+            print(f"✅ Cached lyrics for: {title}")
+        else:
+            print(f"❌ Could not find lyrics for: {title}")
 
         time.sleep(self.sleep_time)
         return lyrics
 
     def _fetch_lyrics_from_genius(self, title: str, artist: str) -> Optional[str]:
-        search_query = f"{title} {artist}"
+        # Cleaner search query for better hits
+        search_query = f"{self._normalize(title)} {self._normalize(artist)}"
 
         try:
             r = requests.get(
@@ -89,51 +103,49 @@ class LyricsFetcher:
             return None
 
         song_url = self._pick_best_hit(hits, title, artist)
-        if not song_url:
-            return None
-
-        return self._scrape_lyrics_page(song_url)
+        return self._scrape_lyrics_page(song_url) if song_url else None
 
     def _pick_best_hit(self, hits, title, artist):
-        title_norm = title.lower()
-        artist_norm = artist.lower()
+        t_norm = self._normalize(title)
+        a_norm = self._normalize(artist)
 
         for hit in hits:
-            result = hit["result"]
-            hit_title = result.get("title", "").lower()
-            hit_artist = result.get("primary_artist", {}).get("name", "").lower()
+            res = hit["result"]
+            h_title = self._normalize(res.get("title", ""))
+            h_artist = self._normalize(res.get("primary_artist", {}).get("name", ""))
 
-            if title_norm in hit_title and artist_norm in hit_artist:
-                return result.get("url")
+            # Priority match: If title and artist both match the search
+            if t_norm in h_title and a_norm in h_artist:
+                return res.get("url")
 
-        return hits[0]["result"].get("url")
+        return hits[0]["result"].get("url") # Fallback to first hit
 
     def _scrape_lyrics_page(self, url: str) -> Optional[str]:
         try:
-            html = requests.get(url, timeout=10).text
-            soup = BeautifulSoup(html, "html.parser")
+            # Use same headers for scraping to look like a browser
+            r = requests.get(url, headers=self.headers, timeout=10)
+            r.raise_for_status()
+            soup = BeautifulSoup(r.text, "html.parser")
         except Exception:
             return None
 
-        containers = soup.select("div[data-lyrics-container='true']")
-
+        # Genius uses several different container styles; this hits the most common ones
+        lyrics_lines = []
+        containers = soup.select("div[class^='Lyrics__Container'], .lyrics")
+        
         if not containers:
-            alt = soup.find("div", class_="lyrics")
-            if alt:
-                lyrics = alt.get_text(separator="\n").strip()
-                return self._clean_lyrics(lyrics)
             return None
 
-        lyrics_lines = []
         for c in containers:
+            # Get text and preserve line breaks
             lyrics_lines.append(c.get_text(separator="\n"))
 
-        lyrics = "\n".join(lyrics_lines).strip()
-        lyrics = self._clean_lyrics(lyrics)
-
-        return lyrics if lyrics else None
+        full_text = "\n".join(lyrics_lines).strip()
+        return self._clean_lyrics(full_text)
 
     def _clean_lyrics(self, lyrics: str) -> str:
-        lyrics = re.sub(r"\[.*?\]", "", lyrics)   
-        lyrics = re.sub(r"\n{2,}", "\n", lyrics)  
+        # Remove [Verse 1], [Chorus], etc.
+        lyrics = re.sub(r"\[.*?\]", "", lyrics) 
+        # Remove excess whitespace/newlines
+        lyrics = re.sub(r"\n{3,}", "\n\n", lyrics)
         return lyrics.strip()

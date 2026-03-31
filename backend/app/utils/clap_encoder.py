@@ -1,4 +1,3 @@
-# app/utils/clap_encoder.py
 import torch
 import numpy as np
 from transformers import ClapModel, ClapProcessor
@@ -34,10 +33,8 @@ class ClapEncoder:
         with torch.no_grad():
             outputs = self.model.get_text_features(**inputs)
 
-        # 1024-dim text embedding
         vec = outputs.cpu().numpy()[0]
 
-        # Try extracting VAD if available; else fallback to 0.5
         try:
             val = float(self.model.text_model.valence_logits.cpu().numpy()[0])
             aro = float(self.model.text_model.arousal_logits.cpu().numpy()[0])

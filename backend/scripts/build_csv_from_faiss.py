@@ -37,7 +37,6 @@ def safe_load_metadata(path):
         raise ValueError("Unsupported metadata shape in song_metadata.json")
 
 def ensure_fields(meta):
-    # return a normalized metadata dict with minimal fields used by recommender
     return {
         "id": meta.get("id") or meta.get("track_id") or meta.get("spotify_id") or meta.get("uri") or meta.get("track_uri") or "",
         "name": meta.get("name") or meta.get("title") or "",
@@ -69,15 +68,12 @@ def main():
     meta_list = safe_load_metadata(SNG_META)
     print("Metadata entries loaded:", len(meta_list))
 
-    # load vectors
     vectors = np.load(str(SNG_VEC), allow_pickle=False)
     print("Vectors shape:", vectors.shape)
 
-    # If vectors is 1D array of objects, try to stack
     if vectors.ndim == 1 and isinstance(vectors[0], (list, np.ndarray)):
         vectors = np.vstack([np.array(v, dtype=np.float32) for v in vectors])
 
-    # Align lengths
     n_meta = len(meta_list)
     n_vec = vectors.shape[0]
     if n_meta != n_vec:
@@ -88,12 +84,10 @@ def main():
         meta_list = meta_list[:m]
         vectors = vectors[:m]
 
-    # Build dataframe rows
     rows = []
     now_year = datetime.utcnow().year
     for meta, vec in zip(meta_list, vectors):
         nm = ensure_fields(meta)
-        # defaults if None
         valence = nm["valence"] if nm["valence"] is not None else 0.5
         energy = nm["energy"] if nm["energy"] is not None else 0.5
         instr = nm["instrumentalness"] if nm["instrumentalness"] is not None else 0.0
@@ -110,7 +104,6 @@ def main():
             "name": nm["name"],
             "artists": nm["artists"],
             "genres": nm["genres"],
-            # Store embedding as a string that literal_eval can parse
             "clap_embed": vector_to_str(np.array(vec, dtype=np.float32)),
             "valence": float(valence),
             "energy": float(energy),
@@ -122,10 +115,8 @@ def main():
         rows.append(row)
 
     df = pd.DataFrame(rows)
-    # ensure data dir exists
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Save CSV
     df.to_csv(OUT_CSV, index=False, encoding="utf-8")
     print("Wrote CSV:", OUT_CSV)
     print("Rows written:", len(df))

@@ -50,7 +50,6 @@ class SpotifyFetcher:
             raw_tracks = []
 
             try:
-                # 1. FETCH EVERY SINGLE SAVED TRACK (PAGINATED)
                 if fetch_saved:
                     print("[SpotifyFetcher] Deep-fetching ALL saved tracks...")
                     results = sp.current_user_saved_tracks(limit=50)
@@ -61,7 +60,6 @@ class SpotifyFetcher:
                         results = sp.next(results)
                         print(f"  > Progress: {len(raw_tracks)} tracks...")
 
-                # 2. FETCH TOP TRACKS (ALL TIME RANGES)
                 if fetch_top:
                     print("[SpotifyFetcher] Fetching top tracks (Short/Med/Long term)...")
                     for trange in ["short_term", "medium_term", "long_term"]:
@@ -69,7 +67,6 @@ class SpotifyFetcher:
                         if top:
                             raw_tracks.extend([t for t in top.get("items", []) if t])
 
-                # 3. FETCH ALL PLAYLISTS (UP TO 50)
                 if fetch_playlists:
                     print("[SpotifyFetcher] Scanning up to 50 playlists...")
                     playlists = sp.current_user_playlists(limit=50) 
@@ -86,7 +83,6 @@ class SpotifyFetcher:
                 print(f"❌ Spotify API Error: {e}")
                 return []
 
-            # 4. DEDUPLICATE & CLEANUP
             all_artist_ids = set()
             unique_tracks = []
             for t in raw_tracks:
@@ -97,7 +93,6 @@ class SpotifyFetcher:
                     for a in t.get("artists", []):
                         if a.get("id"): all_artist_ids.add(a.get("id"))
 
-            print(f"✅ Total Unique Tracks found: {len(unique_tracks)}")
             self._get_batch_genres(sp, list(all_artist_ids))
 
             results = []
@@ -143,7 +138,7 @@ class SpotifyFetcher:
                 "tempo": avg("tempo"),
             }
         except Exception as e:
-            print(f"⚠️ Taste profile failed: {e}")
+            print(f"Taste profile failed: {e}")
             return None
 
     def build_taste_from_tracks(self, tracks: List[Dict]):

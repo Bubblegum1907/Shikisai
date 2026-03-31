@@ -29,8 +29,10 @@ def generate_vibe_vector(access_token, limit=20):
     if not embeddings:
         print("No embeddings generated.")
         return None
-
-    vibe_vector = np.mean(embeddings, axis=0)
+    
+    weights = np.linspace(1.0, 0.5, num=len(embeddings))
+    vibe_vector = np.average(embeddings, axis=0, weights=weights)
+    vibe_vector = vibe_vector / (np.linalg.norm(vibe_vector) + 1e-9)
     print("Vibe Vector generated successfully.")
     
     return vibe_vector

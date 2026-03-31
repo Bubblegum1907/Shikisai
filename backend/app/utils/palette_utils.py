@@ -7,10 +7,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", "..", ".."))
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 PALETTE_PATH = os.path.join(DATA_DIR, "colors and feelings.xlsx")
 
-# Mapping dictionary for emotions to VAD coordinates
-# Based on the Circumplex Model of Affect
 EMOTION_VAD_MAP = {
-    # Positive / High Energy (Vibrant Colors)
     "energetic": {"v": 0.8, "a": 0.9},
     "passionate": {"v": 0.9, "a": 0.8},
     "bold": {"v": 0.6, "a": 0.8},
@@ -22,7 +19,6 @@ EMOTION_VAD_MAP = {
     "happy": {"v": 0.9, "a": 0.6},
     "confident": {"v": 0.7, "a": 0.7},
 
-    # High Intensity / Dark (Deep Colors)
     "intense": {"v": 0.4, "a": 0.9},
     "fiery": {"v": 0.5, "a": 0.9},
     "urgent": {"v": 0.3, "a": 0.9},
@@ -34,7 +30,6 @@ EMOTION_VAD_MAP = {
     "dramatic": {"v": 0.4, "a": 0.7},
     "commanding": {"v": 0.5, "a": 0.7},
 
-    # Calm / Soft (Pastels & Blues)
     "calm": {"v": 0.7, "a": 0.2},
     "serene": {"v": 0.8, "a": 0.1},
     "peaceful": {"v": 0.9, "a": 0.1},
@@ -45,7 +40,6 @@ EMOTION_VAD_MAP = {
     "dreamy": {"v": 0.7, "a": 0.3},
     "tender": {"v": 0.8, "a": 0.3},
 
-    # Serious / Deep (Grays & Dark Tones)
     "serious": {"v": 0.4, "a": 0.4},
     "grounded": {"v": 0.5, "a": 0.3},
     "stable": {"v": 0.6, "a": 0.3},
@@ -68,16 +62,12 @@ def get_vad(e1, e2):
 def load_palette():
     """Load and clean the Excel palette file."""
     if not os.path.isfile(PALETTE_PATH):
-        print(f"❌ CRITICAL: Excel file NOT found at: {PALETTE_PATH}")
+        print(f"CRITICAL: Excel file NOT found at: {PALETTE_PATH}")
         return []
-
-    print(f"📊 Loading palette from: {PALETTE_PATH}")
     
-    # Read the Excel file
     df = pd.read_excel(PALETTE_PATH)
 
     cleaned = []
-    # Loop through rows: assumes columns are named 'hex', 'emotion1', 'emotion2', 'name'
     for _, row in df.iterrows():
         hex_code = str(row.get('hex', '')).strip().upper()
         if not hex_code.startswith('#'):
@@ -86,10 +76,8 @@ def load_palette():
         e2 = str(row.get('emotion2', '')).strip()
         name = str(row.get('name', '')).strip()
 
-        # Hex to LAB for visual matching
         lab_value = hex_to_lab(hex_code)
         
-        # Emotions to VAD for mood matching
         vad_values = get_vad(e1, e2)
 
         cleaned.append({
@@ -101,5 +89,4 @@ def load_palette():
             "vad": vad_values
         })
 
-    print(f"✅ Successfully loaded {len(cleaned)} colors from Excel.")
     return cleaned

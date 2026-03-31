@@ -6,13 +6,12 @@ JSON_PATH = os.path.join(os.path.dirname(__file__), "../static/colors_to_feeling
 with open(JSON_PATH, "r", encoding="utf-8") as f:
     COLOR_FEELINGS = json.load(f)
 
-# EXTREME VAD ANCHORS: We push these to the edges to force FAISS separation
 VAD_ANCHORS = {
-    "red": (0.25, 0.98),     # High Arousal, Low-Mid Valence (Aggressive/Intense)
-    "neon green": (0.90, 0.85), # High Arousal, High Valence (Electric/Energetic)
-    "lavender": (0.85, 0.15),   # Low Arousal, High Valence (Dreamy/Peaceful)
-    "blue": (0.70, 0.20),    # Low Arousal, High Valence (Stable/Cool)
-    "black": (0.10, 0.40),   # Low Valence, Mid Arousal (Dark/Heavy)
+    "red": (0.25, 0.98),    
+    "neon green": (0.90, 0.85), 
+    "lavender": (0.85, 0.15),  
+    "blue": (0.70, 0.20),   
+    "black": (0.10, 0.40),
 }
 
 def hex_to_rgb(h):
@@ -33,32 +32,25 @@ def color_to_text_prompt(hex_color):
     hex_clean = hex_color.strip().lower()
     if not hex_clean.startswith("#"): hex_clean = "#" + hex_clean
 
-    # Get raw emotions from JSON
     if hex_clean in COLOR_FEELINGS:
         emotions = COLOR_FEELINGS[hex_clean]
     else:
         nearest = closest_color(hex_clean)
         emotions = COLOR_FEELINGS.get(nearest, "neutral vibe")
 
-    # Determine VAD based on color name keywords
     v, a = 0.5, 0.5
     for key, val in VAD_ANCHORS.items():
         if key in emotions.lower() or key in hex_clean:
             v, a = val
             break
 
-    # LAYERED PROMPT ARCHITECTURE:
-    # We change the vocabulary entirely based on Arousal levels
     if a > 0.8:
-        # High Arousal (Red, Neon)
         style = "Aggressive electronic synthesizers, high-tempo distorted beats, and intense energy."
         scene = "A high-octane, fast-moving cinematic chase sequence."
     elif a < 0.3:
-        # Low Arousal (Lavender, Soft Blue)
         style = "Minimalist ambient piano, soft reverb-drenched pads, and slow tempo."
         scene = "A motionless, ethereal landscape under a quiet moonlit sky."
     else:
-        # Mid Arousal
         style = "Rhythmic acoustic instrumentation with steady melodic progression."
         scene = "A balanced and focused environment."
 
