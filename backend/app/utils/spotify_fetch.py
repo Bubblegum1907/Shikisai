@@ -37,80 +37,106 @@ class SpotifyFetcher:
                 print(f"⚠️ Batch artist fetch failed: {e}")
 
     def fetch_tracks_from_user(self, 
-                                access_token: str, 
-                                fetch_playlists: bool = True, 
-                                fetch_saved: bool = True, 
-                                fetch_top: bool = True, 
-                                max_per_source: int = 2000, # Increased limit
-                                **kwargs) -> List[Dict]:
-            sp = self._get_sp_client(access_token)
-            if not sp: return []
+                              access_token: str, 
+                              fetch_playlists: bool = True, 
+                              fetch_saved: bool = True, 
+                              fetch_top: bool = True, 
+                              max_per_source: int = 2000, 
+                              **kwargs) -> List[Dict]:
+        sp = self._get_sp_client(access_token)
+        if not sp: return []
 
-            seen = set()
-            raw_tracks = []
+        seen = set()
+        raw_tracks = []
 
-            try:
-                if fetch_saved:
-                    print("[SpotifyFetcher] Deep-fetching ALL saved tracks...")
-                    results = sp.current_user_saved_tracks(limit=50)
-                    while results:
-                        items = [it.get("track") for it in results.get("items", []) if it.get("track")]
+        try:
+            if fetch_saved:
+                print("[SpotifyFetcher] Deep-fetching ALL saved tracks...")
+                results = sp.current_user_saved_tracks(limit=50)
+                while results:
+                    items = [it.get("track") for it in results.get("items", []) if it.get("track")]
+                    raw_tracks.extend(items)
+                    if not results.get("next") or len(raw_tracks) >= max_per_source: break
+                    results = sp.next(results)
+                    print(f"  > Progress: {len(raw_tracks)} tracks...")
+
+            if fetch_top:
+                print("[SpotifyFetcher] Fetching top tracks (Short/Med/Long term)...")
+                for trange in ["short_term", "medium_term", "long_term"]:
+                    top = sp.current_user_top_tracks(limit=50, time_range=trange)
+                    if top:
+                        raw_tracks.extend([t for t in top.get("items", []) if t])
+
+            if fetch_playlists:
+                print("[SpotifyFetcher] Scanning up to 50 playlists...")
+                playlists = sp.current_user_playlists(limit=50) 
+                for pl in playlists.get('items', []):
+                    print(f"  > Scoping playlist: {pl['name']}")
+                    pl_tracks = sp.playlist_tracks(pl['id'], limit=100)
+                    while pl_tracks:
+                        items = [it.get("track") for it in pl_tracks.get("items", []) if it.get("track")]
                         raw_tracks.extend(items)
-                        if not results.get("next") or len(raw_tracks) >= max_per_source: break
-                        results = sp.next(results)
-                        print(f"  > Progress: {len(raw_tracks)} tracks...")
+                        if not pl_tracks.get("next") or len(raw_tracks) >= (max_per_source * 2): break
+                        pl_tracks = sp.next(pl_tracks)
 
-                if fetch_top:
-                    print("[SpotifyFetcher] Fetching top tracks (Short/Med/Long term)...")
-                    for trange in ["short_term", "medium_term", "long_term"]:
-                        top = sp.current_user_top_tracks(limit=50, time_range=trange)
-                        if top:
-                            raw_tracks.extend([t for t in top.get("items", []) if t])
+        except SpotifyException as e:
+            print(f"Spotify API Error: {e}")
+            return []
 
-                if fetch_playlists:
-                    print("[SpotifyFetcher] Scanning up to 50 playlists...")
-                    playlists = sp.current_user_playlists(limit=50) 
-                    for pl in playlists.get('items', []):
-                        print(f"  > Scoping playlist: {pl['name']}")
-                        pl_tracks = sp.playlist_tracks(pl['id'], limit=100)
-                        while pl_tracks:
-                            items = [it.get("track") for it in pl_tracks.get("items", []) if it.get("track")]
-                            raw_tracks.extend(items)
-                            if not pl_tracks.get("next") or len(raw_tracks) >= (max_per_source * 2): break
-                            pl_tracks = sp.next(pl_tracks)
+        # Deduplicate tracks efficiently
+        all_artist_ids = set()
+        unique_tracks = []
+        for t in raw_tracks:
+            sid = t.get("id")
+            if sid and sid not in seen:
+                seen.add(sid)
+                unique_tracks.append(t)
+                for a in t.get("artists", []):
+                    if a.get("id"): all_artist_ids.add(a.get("id"))
 
-            except SpotifyException as e:
-                print(f"❌ Spotify API Error: {e}")
-                return []
+        # 1. Fetch and Cache Artist Genres in Patches
+        self._get_batch_genres(sp, list(all_artist_ids))
 
-            all_artist_ids = set()
-            unique_tracks = []
-            for t in raw_tracks:
-                sid = t.get("id")
-                if sid and sid not in seen:
-                    seen.add(sid)
-                    unique_tracks.append(t)
-                    for a in t.get("artists", []):
-                        if a.get("id"): all_artist_ids.add(a.get("id"))
+        # 2. BATCH LOOKUP AUDIO FEATURES (Max 100 per call)
+        print(f"[SpotifyFetcher] Gathering audio traits for {len(unique_tracks)} tracks...")
+        audio_features_cache = {}
+        unique_ids = [t.get("id") for t in unique_tracks if t.get("id")]
+        
+        for i in range(0, len(unique_ids), 100):
+            chunk = unique_ids[i:i + 100]
+            try:
+                features_list = sp.audio_features(tracks=chunk)
+                for feat in features_list:
+                    if feat:
+                        audio_features_cache[feat["id"]] = feat
+            except Exception as e:
+                print(f"⚠️ Audio feature batch retrieval dropped: {e}")
 
-            self._get_batch_genres(sp, list(all_artist_ids))
-
-            results = []
-            for t in unique_tracks:
-                a_ids = [a.get("id") for a in t.get("artists", [])]
-                genres = []
-                for aid in a_ids:
-                    genres.extend(self.artist_cache.get(aid, []))
-                
-                results.append({
-                    "title": t.get("name"),
-                    "artists": [a.get("name") for a in t.get("artists", [])],
-                    "album": (t.get("album") or {}).get("name"),
-                    "artist_genres": list(set(genres)),
-                    "spotify_id": t.get("id")
-                })
+        # 3. Assemble Unified Structural Metadata Payloads
+        results = []
+        for t in unique_tracks:
+            sid = t.get("id")
+            a_ids = [a.get("id") for a in t.get("artists", [])]
+            genres = []
+            for aid in a_ids:
+                genres.extend(self.artist_cache.get(aid, []))
             
-            return results
+            # Extract acoustic analytics values or fallback to default weights cleanly
+            feat = audio_features_cache.get(sid, {}) if sid else {}
+            
+            results.append({
+                "title": t.get("name"),
+                "artists": [a.get("name") for a in t.get("artists", [])],
+                "album": (t.get("album") or {}).get("name"),
+                "artist_genres": list(set(genres)),
+                "spotify_id": sid,
+                "valence": feat.get("valence", 0.5),
+                "energy": feat.get("energy", 0.5),
+                "speechiness": feat.get("speechiness", 0.0),
+                "instrumentalness": feat.get("instrumentalness", 0.0)
+            })
+        
+        return results
 
     def get_user_taste_profile(self, access_token: str, refresh_token: str):
         """Builds profile from audio features."""

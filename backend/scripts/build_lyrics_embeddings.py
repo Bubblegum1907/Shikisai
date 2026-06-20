@@ -17,59 +17,65 @@ def main():
     env_path = os.path.join(BACKEND_DIR, ".env")
     load_dotenv(dotenv_path=env_path)
 
-    print("--- System Check ---")
     SONGS_PATH = os.path.join(BACKEND_DIR, "data", "song_metadata.json")
     
     if not os.path.exists(SONGS_PATH):
-        print(f"Metadata Missing: {SONGS_PATH}")
+        print(f"Error: {SONGS_PATH} not found.")
         return
-
-    token = os.getenv("GENIUS_ACCESS_TOKEN")
-    if not token:
-        print(f"Genius Token Missing! Checked: {env_path}")
-        return
-    else:
-        print(f"Genius Token Loaded: {token[:4]}***")
-    print("--------------------\n")
 
     with open(SONGS_PATH, "r", encoding="utf-8") as f:
         songs = json.load(f)
 
-    print("Initializing Encoders (this may take a moment)...")
+    print(f"Target: {len(songs)} tracks")
+
     clap = ClapEncoder()
     embedder = LyricsEmbedder(clap)
 
-    count = 0
-    print(f"Starting process for {len(songs)} songs...\n")
+    new_count = 0
+    skipped_count = 0
 
-    for s in songs:
-        # 1. Use 'name' if 'title' is missing (Spotify call it 'name')
-        title = s.get("name") or s.get("title") 
-        artists = s.get("artists", [])
+    try:
+        for i, s in enumerate(songs):
+            if s.get("clap_embed") is not None and (isinstance(s["clap_embed"], list) and len(s["clap_embed"]) > 0):
+                skipped_count += 1
+                continue
+
+            title = s.get("name") or s.get("title") 
+            artists = s.get("artists", [])
+            artist = artists if isinstance(artists, str) else (artists[0] if artists else "Unknown")
+            
+            if not title:
+                continue
+
+            time.sleep(0.15)
+            
+            print(f"[{i+1}/{len(songs)}] Processing: {title}...", end="\r")
+            emb = embedder.embed_song(title, artist)
+
+            if emb is not None:
+                s["clap_embed"] = emb.tolist() if hasattr(emb, 'tolist') else emb
+                new_count += 1
+                print(f"[{i+1}/{len(songs)}] [SUCCESS] {title} - {artist}          ")
+                
+                if new_count % 5 == 0:
+                    with open(SONGS_PATH, "w", encoding="utf-8") as f:
+                        json.dump(songs, f, indent=2, ensure_ascii=False)
+            else:
+                print(f"[{i+1}/{len(songs)}] [FAILED] {title} - {artist}           ")
+
+    except KeyboardInterrupt:
+        print("\n\nManual Interruption. Cleaning up.")
+    except Exception as e:
+        print(f"\n\nFatal Error: {e}")
+    finally:
+        # 4. FINAL SYNC
+        with open(SONGS_PATH, "w", encoding="utf-8") as f:
+            json.dump(songs, f, indent=2, ensure_ascii=False)
         
-        if not title or not artists:
-            continue
-
-        artist = artists if isinstance(artists, str) else artists[0]
-        
-        time.sleep(0.1)
-        
-        # 2. Get the embedding
-        emb = embedder.embed_song(title, artist)
-
-        if emb is not None:
-            # 3. CRITICAL: Save the embedding into the song dictionary!
-            s["clap_embed"] = emb.tolist() if hasattr(emb, 'tolist') else emb
-            count += 1
-            print(f"  [SUCCESS] {title} - {artist}")
-        else:
-            print(f"  [SKIPPED] {title} - {artist}")
-
-    # 4. CRITICAL: Save the updated 'songs' list back to the JSON file
-    with open(SONGS_PATH, "w", encoding="utf-8") as f:
-        json.dump(songs, f, indent=2, ensure_ascii=False)
-
-    print(f"\nDone! New embeddings saved. Total: {count}/{len(songs)}")
+        print(f"\n--- Process Complete ---")
+        print(f"Cached: {skipped_count}")
+        print(f"Added:  {new_count}")
+        print(f"Total:  {len(songs)}")
 
 if __name__ == "__main__":
     main()

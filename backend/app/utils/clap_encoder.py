@@ -14,7 +14,6 @@ class ClapEncoder:
     def __init__(self):
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
 
-        # Load the actual CLAP model
         self.model = ClapModel.from_pretrained("laion/clap-htsat-fused").to(self.device)
         self.processor = ClapProcessor.from_pretrained("laion/clap-htsat-fused")
 

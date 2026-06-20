@@ -19,6 +19,7 @@ from .models.song_store import SongStore
 
 app = FastAPI(title="Shikisai Recommender")
 
+# Double-check that your frontend port exactly matches one of these!
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:8080", "http://127.0.0.1:8080"],
@@ -38,8 +39,9 @@ VIBE_CACHE = {}
 def startup_event():
     try:
         store.load_index()
+        print("[Startup] FAISS index loaded successfully.")
     except Exception as e:
-        print("No FAISS index found - will build on demand.", e)
+        print("[Startup] No FAISS index found - will build on demand.", e)
 
 def get_color_metadata(hex_code: str):
     """Maps a hex code to emotional prompts and VAD values using Perceptual Matching."""
@@ -58,7 +60,9 @@ def get_color_metadata(hex_code: str):
                 return math.sqrt(l_diff**2 + a_diff**2 + b_diff**2)
             
             match = min(COLOR_PALETTE, key=calculate_distance)
-        except Exception:
+            print(f"[Color Match] Hex #{user_hex} matched perceptually to closest palette color: {match.get('hex')}")
+        except Exception as e:
+            print(f"[Color Match Error] Failed perceptual mapping for #{hex_code}: {e}")
             return "Atmospheric and balanced music.", (0.5, 0.5)
 
     e1, e2 = match['emotion1'], match['emotion2']
@@ -71,6 +75,7 @@ def get_color_metadata(hex_code: str):
 
 def perform_indexing(payload, fetcher, song_store):
     try:
+        print(f"[Indexing] Starting background taste indexing for token ending in ...{payload.token[-10:]}")
         tracks = fetcher.fetch_tracks_from_user(
             access_token=payload.token,
             fetch_playlists=payload.fetch_playlists,
@@ -81,11 +86,12 @@ def perform_indexing(payload, fetcher, song_store):
         
         if tracks:
             n_added = song_store.add_spotify_tracks(tracks)
+            print(f"[Indexing] Successfully loaded {n_added} unique tracks into live memory structures.")
         else:
-            print("No tracks found for this user.")
+            print("[Indexing] No tracks found for this user.")
             
     except Exception as e:
-        print(f"Background Indexing Failed: {str(e)}")
+        print(f"[Indexing Failed] Background task hit an error: {str(e)}")
         traceback.print_exc()
 
 @app.get("/auth/login")
@@ -121,22 +127,38 @@ def build_index_spotify(payload: BuildSpotifyPayload, background_tasks: Backgrou
 @app.get("/recommend")
 def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = None, refresh_token: Optional[str] = None):
     try:
+        print(f"\n[RECOMMEND] New incoming request -> hex: {hex}, k: {k}, has_token: {token is not None}")
+        
         if not hex: 
-            return {"ok": True}
+            print("[RECOMMEND Warning] Request received with missing or empty hex param.")
+            return {
+                "hex": None,
+                "prompt": "",
+                "vad": {"valence": 0.5, "arousal": 0.5},
+                "recommendations": [],
+                "personalized": False,
+                "warning": "No hex code provided"
+            }
 
+        # 1. Grab advanced perceptual matching stats from palette properties
         prompt, (v, a) = get_color_metadata(hex)
+        print(f"[RECOMMEND] Generated prompt: '{prompt}' | VAD: ({v}, {a})")
 
         vibe_vec = None
         if token:
             if token in VIBE_CACHE:
+                print("[RECOMMEND] Profile vibe vector found in memory cache.")
                 vibe_vec = VIBE_CACHE[token]
             else:
                 try:
                     vibe_vec = generate_vibe_vector(token)
                     VIBE_CACHE[token] = vibe_vec
+                    print("[RECOMMEND] Vibe Vector generated successfully.")
                 except Exception as e:
-                    print(f"Vibe profiling failed: {e}")
+                    print(f"[RECOMMEND Error] Vibe profiling failed: {e}")
 
+        # 2. Extract structural prompt descriptions using the CLAP encoder model
+        print("[RECOMMEND] Encoding text prompt with CLAP...")
         text_emb = clap.encode_text(prompt)
         text_emb = np.asarray(text_emb, dtype=np.float32).flatten()
         
@@ -145,6 +167,8 @@ def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = Non
         else:
             text_emb = np.pad(text_emb, (0, max(0, 512 - text_emb.size)))
 
+        # 3. Fire calculations against live vector memory pools
+        print("[RECOMMEND] Querying hybrid recommendation pool...")
         recs = recommend_hybrid(
             query_embed=text_emb,
             v=v, 
@@ -154,6 +178,16 @@ def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = Non
             vibe_vector=vibe_vec,
             store=store 
         )
+        
+        # FIX: Ensure recs is never None before checking its length or returning it!
+        if recs is None:
+            print("[RECOMMEND Warning] recommend_hybrid returned None! Defaulting to empty list.")
+            recs = []
+        
+        print(f"[RECOMMEND Success] Hybrid recommendation complete. Found {len(recs)} tracks.")
+
+        if len(recs) == 0:
+            print("[RECOMMEND Warning] The recommendations list is EMPTY. Check if store/FAISS index actually has tracks.")
 
         return {
             "hex": hex,
@@ -164,5 +198,6 @@ def recommend(hex: Optional[str] = None, k: int = 10, token: Optional[str] = Non
         }
 
     except Exception as e:
+        print(f"[RECOMMEND Critical Error] Endpoint failed completely!")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))

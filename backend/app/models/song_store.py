@@ -1,4 +1,3 @@
-# app/models/song_store.py
 import os
 import json
 import numpy as np
@@ -63,10 +62,11 @@ class SongStore:
         
         norm = np.linalg.norm(vec) + 1e-9
         return vec / norm
-
+    
     def add_spotify_tracks(self, tracks: List[Dict], color_hex: Optional[str] = None) -> int:
         """
-        Adds tracks and uses color_to_text_prompt to inject emotional coordinates.
+        Adds tracks to the FAISS store, prioritizing real acoustic features 
+        from Spotify, with fallbacks to color prompts or defaults.
         """
         if not isinstance(tracks, list): return 0
 
@@ -75,10 +75,11 @@ class SongStore:
         new_vecs = []
         new_meta = []
         
+        # Base fallback parameters if the track lacks native acoustic data
         batch_prompt = ""
-        v, a = 0.5, 0.5
+        fallback_v, fallback_a = 0.5, 0.5
         if color_hex:
-            batch_prompt, (v, a) = color_to_text_prompt(color_hex)
+            batch_prompt, (fallback_v, fallback_a) = color_to_text_prompt(color_hex)
 
         for t in tracks:
             spotify_id = t.get("spotify_id") or t.get("id")
@@ -90,12 +91,21 @@ class SongStore:
             artists = [a.get("name") if isinstance(a, dict) else str(a) for a in artists_raw]
             genres = t.get("artist_genres") or t.get("genres") or []
 
+            # 1. READ ORGANIC METRICS directly from our updated spotify_fetch tool
+            # Falls back to batch color values or baseline 0.5 if unavailable
+            track_v = t.get("valence", fallback_v)
+            track_e = t.get("energy", fallback_a)
+            speechiness = t.get("speechiness", 0.0)
+            instrumentalness = t.get("instrumentalness", 0.0)
+
+            # Keep text description clean and enriched for CLAP encoding
             text_desc = f"Song '{title}' by {', '.join(artists)}. Genres: {', '.join(genres)}. Context: {batch_prompt}"
 
             try:
                 text_out = self.clap.encode_text(text_desc)
                 
-                vec = self._make_song_vector(text_out, v=v, a=a)
+                # 2. INJECT UNIQUE TRACK VALUES straight into the 1027-d space
+                vec = self._make_song_vector(text_out, v=track_v, a=track_e)
                 
                 if vec is not None:
                     new_vecs.append(vec)
@@ -104,7 +114,10 @@ class SongStore:
                         "title": title,
                         "artists": artists,
                         "genres": genres,
-                        "vad_score": [float(v), float(a), 0.5],
+                        # Save explicit values so recommend_hybrid can see them instantly
+                        "vad_score": [float(track_v), float(track_e), 0.5],
+                        "speechiness": float(speechiness),
+                        "instrumentalness": float(instrumentalness),
                         "source": "spotify",
                     })
                     self.seen_ids.add(spotify_id)
@@ -114,7 +127,7 @@ class SongStore:
 
         if not new_vecs: return 0
 
-        # Update local storage
+        # Update local arrays
         new_vecs_np = np.stack(new_vecs).astype(np.float32)
         if self.vectors is None:
             self.vectors = new_vecs_np
@@ -123,7 +136,7 @@ class SongStore:
             self.vectors = np.vstack([self.vectors, new_vecs_np])
             self.metadata.extend(new_meta)
 
-        # Persist to disk
+        # Persist everything cleanly to storage volumes
         np.save(self.vectors_path, self.vectors)
         with open(self.meta_path, "w", encoding="utf-8") as f:
             json.dump(self.metadata, f, indent=2, ensure_ascii=False)

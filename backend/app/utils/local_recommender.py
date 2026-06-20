@@ -5,7 +5,6 @@ import re
 import colorsys
 import numpy as np
 import pandas as pd
-import app.utils.taste_profiler
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DATA_DIR = os.path.join(BASE_DIR, "data")
@@ -15,7 +14,7 @@ LYRICS_PATH = os.path.join(DATA_DIR, "lyrics_embeddings.json")
 def normalize_text(s):
     if not isinstance(s, str): return ""
     s = s.lower()
-    s = re.sub(r"\(.*?\)|\[.*?\]", "", s) # Combined parens/brackets
+    s = re.sub(r"\(.*?\)|\[.*?\]", "", s) 
     s = re.sub(r"[^a-z0-9\s]", "", s)
     return " ".join(s.split())
 
@@ -53,15 +52,17 @@ def load_and_prep_data():
     def parse_embed(x):
         try:
             arr = np.array(ast.literal_eval(x) if isinstance(x, str) else x, dtype=np.float32)
-            return arr[:512] if arr.ndim == 1 and np.linalg.norm(arr) > 1e-6 else None
+            if arr.ndim == 1 and len(arr) >= 512 and np.linalg.norm(arr) > 1e-6:
+                return arr[:512]
+            return None
         except: return None
 
     df["clap_vec"] = df["clap_embed"].apply(parse_embed)
     df = df[df["clap_vec"].notnull()].reset_index(drop=True)
     
-    cols_to_fix = {"valence": 0.5, "energy": 0.5, "instrumentalness": 0.0, "speechiness": 0.05, "popularity": 0}
+    cols_to_fix = {"valence": 0.5, "energy": 0.5} 
     for col, val in cols_to_fix.items():
-        df[col] = df[col].fillna(val)
+        df[col] = df[col].fillna(val) if col in df.columns else val
         
     matrix = np.vstack(df["clap_vec"].values)
     norm_matrix = matrix / (np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9)
@@ -332,7 +333,6 @@ def get_lyric_sim(row, query_norm):
     try:
         if isinstance(artist_raw, str) and artist_raw.startswith("["):
             artist_list = ast.literal_eval(artist_raw)
-            # Check if the list actually has items before grabbing index 0
             artist = artist_list[0] if len(artist_list) > 0 else "unknown"
         else:
             artist = artist_raw if pd.notnull(artist_raw) else "unknown"
@@ -346,76 +346,124 @@ def get_lyric_sim(row, query_norm):
     
     return 0.0
 
-def recommend_hybrid(query_embed, hex_color="#FFFFFF", vibe_vector=None, limit=10, v=None, a=None, store=None):
-    # 1. Resolve Emotion & V-A Targets
-    description = COLOR_DESCRIPTIONS.get(hex_color.upper(), "neutral, calm")
+def recommend_hybrid(query_embed, hex_color="#FFFFFF", vibe_vector=None, limit=10, v=None, a=None, store=None, **kwargs):
+    """
+    Dynamically sorts and yields recommendations directly extracted from the 
+    live application SongStore tracking matrices.
+    """
+    # 1. Pipeline Validation Guard
+    if store is None or store.vectors is None or not store.metadata:
+        return []
+        
+    # Build dynamic working DataFrame straight from the store's metadata state
+    df_active = pd.DataFrame(store.metadata).copy()
+    
+    # 🚨 FIX: Normalize legacy or mismatched keys on the fly to prevent KeyErrors
+    if "name" in df_active.columns and "title" not in df_active.columns:
+        df_active = df_active.rename(columns={"name": "title"})
+    if "id" in df_active.columns and "spotify_id" not in df_active.columns:
+        df_active = df_active.rename(columns={"id": "spotify_id"})
+        
+    # Extra safety check: if 'title' still isn't there, the metadata is completely blank/corrupt
+    if "title" not in df_active.columns:
+        print("⚠️ Warning: 'title' column missing from track metadata arrays.")
+        return []
+    
+    clean_hex = hex_color.upper() if hex_color else "#FFFFFF"
+    description = COLOR_DESCRIPTIONS.get(clean_hex, "neutral, calm")
     v_target, e_target = resolve_color_emotion(description)
 
+    # Allow custom overrides passed explicitly from main.py
     v_target = v if v is not None else v_target
     e_target = a if a is not None else e_target
     
-    # 2. Setup Query Vectors
-    query_vec = np.asarray(query_embed, dtype=np.float32)[:512]
+    query_vec = np.asarray(query_embed, dtype=np.float32).flatten()[:512]
     query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-9)
     
-    # 3. Filtering Logic (The "Anti-OST" Shield)
-    text_data = (df["name"].fillna("") + " " + df["artists"].astype(str).fillna("")).str.lower()
+    # 2. Content Blacklist Filters
+    # Clean fallback for artists array tracking
+    artists_series = df_active["artists"].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+    text_data = (df_active["title"].fillna("") + " " + artists_series.fillna("")).str.lower()
+    
     blacklist = r"soundtrack|ost|theme|zelda|pokémon|final fantasy|game music|bgm"
     allowed = r"anime|animation|drama|tv|opening|ending"
     
-    drop_mask = text_data.str.contains(blacklist, na=False) & (df["instrumentalness"] > 0.75) & ~text_data.str.contains(allowed, na=False)
-    df_active = df[~drop_mask].copy()
-
-    # 4. Intent Config (HSV-based Sound Profile)
-    h, s, v = hsv_from_hex(hex_color)
-    if v < 0.25: 
-        intent_key = "dark_moody"
-    elif s < 0.2: 
-        intent_key = "warm_soft"
-    elif s > 0.6 and v > 0.6: 
-        intent_key = "bold_confident"
-    else: 
-        intent_key = "cool_soft"
+    is_ost = text_data.str.contains(blacklist, na=False)
+    is_allowed = text_data.str.contains(allowed, na=False)
     
-    cfg = INTENT_CONFIG.get(intent_key, INTENT_CONFIG["cool_soft"])
-
-    # 5. Audio Similarities (Hybrid Search + Taste)
-    df_active["search_sim"] = EMB_NORM[df_active.index] @ query_norm
+    # Filter out blacklisted gaming tracks unless explicitly whitelisted
+    valid_mask = ~(is_ost & ~is_allowed)
     
-    if vibe_vector is not None:
-        vibe_norm = np.asarray(vibe_vector, dtype=np.float32)[:512]
-        vibe_norm = vibe_norm / (np.linalg.norm(vibe_norm) + 1e-9)
-        # 70/30 Blend
-        df_active["clap_sim"] = (df_active["search_sim"] * 0.7) + (EMB_NORM[df_active.index] @ vibe_norm * 0.3)
-    else:
-        df_active["clap_sim"] = df_active["search_sim"]
+    # 3. Vector Similarity Calculations
+    store_matrix = np.vstack(store.vectors)
     
-    # 6. Lyrical Similarity (Now using the external helper)
-    df_active["lyrics_sim"] = df_active.apply(lambda r: get_lyric_sim(r, query_norm), axis=1)
-
-    # 7. Emotional Distance (The heart of the 93 colors)
-    e_dist = np.sqrt((df_active["valence"] - v_target)**2 + (df_active["energy"] - e_target)**2)
-    df_active["emo_score"] = np.exp(-4.0 * e_dist)
+    # Slice the store matrix down to the first 512 dimensions to match the CLAP text query
+    if store_matrix.shape[1] > 512:
+        print(f"[RECOMMEND] Slicing store matrix from {store_matrix.shape} down to 512 dimensions for CLAP alignment.")
+        store_matrix = store_matrix[:, :512]
+        
+    store_norm = store_matrix / (np.linalg.norm(store_matrix, axis=1, keepdims=True) + 1e-9)
     
-    # Filter by intent-specific tightness
-    df_active = df_active[e_dist < cfg["cutoff"]]
+    # Calculate CLAP cosine similarities (Now both are strictly 512)
+    clap_scores = np.dot(store_norm, query_norm)
+    
+    # 4. Hybrid Scoring Aggregation Loop
+    final_scores = []
+    
+    for idx, row in df_active.iterrows():
+        if not valid_mask[idx]:
+            final_scores.append(-999.0) # Completely suppress blacklisted tracks
+            continue
+            
+        # Base CLAP similarity
+        score = clap_scores[idx] * 0.5
+        
+        # Perceptual Valence/Energy (Arousal) penalty calculation
+        track_v = float(row.get("valence", 0.5))
+        track_e = float(row.get("energy", 0.5)) # mapping energy to arousal target
+        
+        v_dist = abs(track_v - v_target)
+        e_dist = abs(track_e - e_target)
+        
+        # Penalize tracks that are emotionally distant from our color frequencies
+        score -= (v_dist * 0.15 + e_dist * 0.15)
+        
+        # Personalization integration if a profile vibe vector exists
+        if vibe_vector is not None:
+            track_vec = store_norm[idx]
+            vibe_sim = np.dot(track_vec, vibe_vector) / (np.linalg.norm(vibe_vector) + 1e-9)
+            score += (vibe_sim * 0.2) # Apply 20% taste personalization boost
+            
+        final_scores.append(score)
+        
+    # 5. Build Result Payloads
+    df_active["_final_score"] = final_scores
+    top_tracks = df_active.sort_values(by="_final_score", ascending=False).head(limit)
+    
+    recommendations = []
+    for _, track in top_tracks.iterrows():
+        if track["_final_score"] <= -500:
+            continue # Skip any blacklisted items
+            
+        # Parse artists back safely if stored as string lists
+        artists_val = track.get("artists", ["Unknown Artist"])
+        if isinstance(artists_val, str) and artists_val.startswith("["):
+            try:
+                artists_val = ast.literal_eval(artists_val)
+            except Exception:
+                artists_val = [artists_val]
+        elif isinstance(artists_val, str):
+            artists_val = [artists_val]
 
-    # 8. Final Weighted Scoring
-    df_active["score"] = (
-        (df_active["clap_sim"] * cfg["clap_w"]) +
-        (df_active["emo_score"] * 1.2) +
-        (df_active["lyrics_sim"] * 0.6) +
-        (df_active["energy"] * cfg["e_bias"]) +
-        (df_active["valence"] * cfg["v_bias"]) +
-        (df_active["speechiness"] * cfg["vocal"]) -
-        (df_active["instrumentalness"] * cfg["inst"])
-    )
-
-    # 9. Polish and Return
-    df_active["artist_key"] = df_active["artists"].astype(str)
-    final_df = (df_active.sort_values("score", ascending=False)
-                .drop_duplicates(subset=["name"])
-                .groupby("artist_key").head(2)
-                .head(limit))
-
-    return final_df[["id", "name", "artists"]].to_dict(orient="records")
+        recommendations.append({
+            "id": track.get("spotify_id", ""),
+            "title": track.get("title", "Unknown Title"),
+            "name": track.get("title", "Unknown Title"),
+            "artists": artists_val,
+            "album": track.get("album", "Unknown Album"),
+            "image_url": track.get("image_url", ""),
+            "preview_url": track.get("preview_url", None),
+            "score": float(track["_final_score"])
+        })
+        
+    return recommendations # This is what was missing!

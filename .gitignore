@@ -36,6 +36,7 @@ backend/data/faiss.index
 backend/data/*.index
 backend/data/*.bin
 backend/data/*.npy
+backend/data/songs/*.mp3
 
 # OS junk
 .DS_Store
@@ -47,3 +48,10 @@ Thumbs.db
 *.swp
 
 backend/.spotifycache/
+backend/.cache/
+
+# Python Distribution
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST

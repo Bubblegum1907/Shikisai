@@ -4,7 +4,7 @@ def hex_to_rgb(hex_code: str):
     """Converts #RRGGBB to (R, G, B) tuple."""
     hex_code = hex_code.lstrip('#')
     if len(hex_code) != 6:
-        return (128, 128, 128) # Fallback gray
+        return (128, 128, 128) 
     return tuple(int(hex_code[i:i+2], 16) for i in (0, 2, 4))
 
 def rgb_to_xyz(rgb):
@@ -43,4 +43,4 @@ def hex_to_lab(hex_code: str):
         xyz = rgb_to_xyz(rgb)
         return xyz_to_lab(xyz)
     except Exception:
-        return (50.0, 0.0, 0.0) # Neutral gray fallback
+        return (50.0, 0.0, 0.0)

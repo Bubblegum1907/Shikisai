@@ -1,4 +1,3 @@
-# app/utils/color_to_text.py
 import json
 import os
 

@@ -9,10 +9,7 @@ from dotenv import load_dotenv
 from bs4 import BeautifulSoup
 from typing import Optional
 
-# --- 1. DYNAMIC PATH SETUP (The "Vaccine") ---
 current_file = Path(__file__).resolve()
-# Assuming this script is in backend/scripts/ or backend/app/utils/
-# This finds the 'backend' root folder regardless
 backend_root = current_file.parent.parent if 'scripts' in current_file.parts else current_file.parent
 sys.path.append(str(backend_root))
 
@@ -21,7 +18,6 @@ GENIUS_SEARCH_URL = "https://api.genius.com/search"
 
 class LyricsFetcher:
     def __init__(self, sleep_time: float = 0.4):
-        # Explicitly load .env from the backend root
         load_dotenv(dotenv_path=backend_root / ".env")
         
         self.sleep_time = sleep_time
@@ -30,7 +26,6 @@ class LyricsFetcher:
         if not self.token:
             raise RuntimeError(f"GENIUS_ACCESS_TOKEN not found. Check your .env at {backend_root}")
 
-        # Headers: Added User-Agent to prevent getting blocked during scraping
         self.headers = {
             "Authorization": f"Bearer {self.token}",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
@@ -44,7 +39,7 @@ class LyricsFetcher:
                 with open(CACHE_PATH, "r", encoding="utf-8") as f:
                     return json.load(f)
             except Exception as e:
-                print(f"⚠️ Cache read error: {e}")
+                print(f"Cache read error: {e}")
                 return {}
         return {}
 
@@ -55,7 +50,6 @@ class LyricsFetcher:
 
     def _normalize(self, text: str):
         text = text.lower().strip()
-        # Remove text in parentheses like "(Remastered)" or "- Live"
         text = re.sub(r"\(.*?\)|- .*?$", "", text)
         text = re.sub(r"[^\w\s]", "", text)
         return " ".join(text.split())
@@ -71,19 +65,17 @@ class LyricsFetcher:
 
         lyrics = self._fetch_lyrics_from_genius(title, artist)
 
-        # Only cache if we actually found something
         if lyrics:
             self.cache[key] = lyrics
             self._save_cache()
-            print(f"✅ Cached lyrics for: {title}")
+            print(f"Cached lyrics for: {title}")
         else:
-            print(f"❌ Could not find lyrics for: {title}")
+            print(f"Could not find lyrics for: {title}")
 
         time.sleep(self.sleep_time)
         return lyrics
 
     def _fetch_lyrics_from_genius(self, title: str, artist: str) -> Optional[str]:
-        # Cleaner search query for better hits
         search_query = f"{self._normalize(title)} {self._normalize(artist)}"
 
         try:
@@ -114,22 +106,19 @@ class LyricsFetcher:
             h_title = self._normalize(res.get("title", ""))
             h_artist = self._normalize(res.get("primary_artist", {}).get("name", ""))
 
-            # Priority match: If title and artist both match the search
             if t_norm in h_title and a_norm in h_artist:
                 return res.get("url")
 
-        return hits[0]["result"].get("url") # Fallback to first hit
+        return hits[0]["result"].get("url")
 
     def _scrape_lyrics_page(self, url: str) -> Optional[str]:
         try:
-            # Use same headers for scraping to look like a browser
             r = requests.get(url, headers=self.headers, timeout=10)
             r.raise_for_status()
             soup = BeautifulSoup(r.text, "html.parser")
         except Exception:
             return None
 
-        # Genius uses several different container styles; this hits the most common ones
         lyrics_lines = []
         containers = soup.select("div[class^='Lyrics__Container'], .lyrics")
         
@@ -137,15 +126,12 @@ class LyricsFetcher:
             return None
 
         for c in containers:
-            # Get text and preserve line breaks
             lyrics_lines.append(c.get_text(separator="\n"))
 
         full_text = "\n".join(lyrics_lines).strip()
         return self._clean_lyrics(full_text)
 
     def _clean_lyrics(self, lyrics: str) -> str:
-        # Remove [Verse 1], [Chorus], etc.
         lyrics = re.sub(r"\[.*?\]", "", lyrics) 
-        # Remove excess whitespace/newlines
         lyrics = re.sub(r"\n{3,}", "\n\n", lyrics)
         return lyrics.strip()
