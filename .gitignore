@@ -37,6 +37,8 @@ backend/data/*.index
 backend/data/*.bin
 backend/data/*.npy
 backend/data/songs/*.mp3
+backend/data/my_tracks_with_clap.csv
+backend/data/song_metadata.json
 
 # OS junk
 .DS_Store
