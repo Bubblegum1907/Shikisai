@@ -1,9 +1,45 @@
-# Environment & secrets
+# ============================================================
+# SECRETS & AUTH TOKENS  ← most important section
+# ============================================================
 .env
 .env.*
 *.env
 
-# Python
+# Spotify OAuth cache files (contain live access tokens)
+backend/.cache
+backend/.spotifycache
+backend/scripts/.cache
+.spotifycache
+.cache
+
+# ============================================================
+# GENERATED DATA & ML ARTIFACTS
+# ============================================================
+
+# FAISS index (large binary, rebuild from data)
+backend/data/faiss.index
+backend/data/*.index
+backend/data/*.bin
+
+# Numpy vector files (large, regenerated from CSV/metadata)
+backend/data/*.npy
+backend/data/song_vectors.npy
+
+# Audio clips downloaded from YouTube
+backend/data/songs/*.mp3
+backend/data/songs/
+
+# The main CSV and JSON data files (too large / user-specific)
+backend/data/my_tracks_with_clap.csv
+backend/data/song_metadata.json
+
+# Lyrics and embedding caches (auto-regenerated, contain scraped content)
+backend/app/data/lyrics_embeddings.json
+backend/app/utils/data/lyrics_cache.json
+
+# ============================================================
+# PYTHON
+# ============================================================
 __pycache__/
 *.pyc
 *.pyo
@@ -19,41 +55,37 @@ venv/
 .env/
 .venv/
 
-# Jupyter / notebooks
-.ipynb_checkpoints/
-
-# Node / frontend
-node_modules/
-dist/
-build/
-
-# Vite
-frontend/node_modules/
-frontend/dist/
-
-# FAISS / data artifacts
-backend/data/faiss.index
-backend/data/*.index
-backend/data/*.bin
-backend/data/*.npy
-backend/data/songs/*.mp3
-backend/data/my_tracks_with_clap.csv
-backend/data/song_metadata.json
-
-# OS junk
-.DS_Store
-Thumbs.db
-
-# Editor / IDE
-.vscode/
-.idea/
-*.swp
-
-backend/.spotifycache/
-backend/.cache/
-
-# Python Distribution
+# Distribution / packaging
 *.egg-info/
 .installed.cfg
 *.egg
 MANIFEST
+dist/
+build/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# ============================================================
+# NODE / FRONTEND
+# ============================================================
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.*
+
+# Vite build output
+dist/
+dist-ssr
+*.local
+
+# ============================================================
+# OS & EDITOR
+# ============================================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
