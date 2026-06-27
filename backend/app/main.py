@@ -230,6 +230,15 @@ def get_indexing_status():
         "store_size": len(store.metadata) if store.metadata else 0,
     }
 
+def sanitize_data(data):
+    if isinstance(data, dict):
+        return {k: sanitize_data(v) for k, v in data.items()}
+    elif isinstance(data, list):
+        return [sanitize_data(x) for x in data]
+    elif isinstance(data, float):
+        if math.isnan(data) or math.isinf(data):
+            return None  # Replaces NaN/Inf with JSON-compliant null
+    return data
 
 # ---------------------------------------------------------------------------
 # Recommendation route
@@ -305,13 +314,17 @@ def recommend(
             recs = []
 
         print(f"[RECOMMEND] Returning {len(recs)} tracks.")
-        return {
+        
+        # --- SANITIZATION HAPPENS HERE ---
+        response_data = {
             "hex": hex,
             "prompt": prompt,
             "vad": {"valence": round(v, 2), "arousal": round(a, 2)},
             "recommendations": recs,
             "personalized": vibe_vec is not None,
         }
+        
+        return sanitize_data(response_data)
 
     except Exception as e:
         print("[RECOMMEND] Critical error:")
