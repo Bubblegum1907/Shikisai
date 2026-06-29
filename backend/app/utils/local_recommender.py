@@ -1,15 +1,7 @@
 """
 local_recommender.py
 
-Hybrid recommendation engine combining:
-  - CLAP text embedding cosine similarity
-  - Valence / Energy (arousal) emotional distance penalty
-  - Optional user taste personalisation via vibe vector
-
-FIX: Data is now loaded lazily (only when first needed) instead of at
-     module import time. A missing CSV no longer crashes the entire app.
-FIX: Single source of truth — recommendations always come from the live
-     SongStore passed in, never from a fallback CSV read.
+Hybrid recommendation engine fully supporting 515-dimensional vector queries.
 """
 
 import os
@@ -25,15 +17,11 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 DATA_DIR = os.path.join(BASE_DIR, "data")
 LYRICS_PATH = os.path.join(DATA_DIR, "lyrics_embeddings.json")
 
-# ---------------------------------------------------------------------------
-# Lazy-loaded globals — populated on first call to recommend_hybrid
-# ---------------------------------------------------------------------------
 _LYRICS_EMBEDDINGS: Optional[dict] = None
 _data_loaded = False
 
 
 def _load_lyrics_embeddings() -> dict:
-    """Loads lyrics embeddings from disk once, returns empty dict if missing."""
     if not os.path.exists(LYRICS_PATH):
         print(f"[Recommender] No lyrics embeddings found at {LYRICS_PATH} — skipping.")
         return {}
@@ -48,18 +36,15 @@ def _load_lyrics_embeddings() -> dict:
 
 
 def _ensure_loaded():
-    """Idempotent loader — safe to call multiple times."""
     global _LYRICS_EMBEDDINGS, _data_loaded
     if not _data_loaded:
         _LYRICS_EMBEDDINGS = _load_lyrics_embeddings()
         _data_loaded = True
 
 
-# ---------------------------------------------------------------------------
-# Colour → emotion helpers
-# ---------------------------------------------------------------------------
-
+# --- Colour description map definitions ---
 COLOR_DESCRIPTIONS = {
+    # Keep your exact color configurations here
     "#FFEBEB": "gentle, airy",       "#FFCFCF": "soft, tender",
     "#FFB3B3": "romantic, lighthearted", "#FF9797": "affectionate, uplifting",
     "#FF7A7A": "warm, lively",       "#FF5C5C": "passionate, energetic",
@@ -68,119 +53,98 @@ COLOR_DESCRIPTIONS = {
     "#CC0000": "brooding, dramatic", "#B30000": "deep, commanding",
     "#990000": "serious, intense",   "#800000": "grounded, strong",
     "#660000": "dark, heavy",
-
     "#FFE5D6": "delicate, warm",     "#FFD1BB": "gentle, comforting",
     "#FFBC9E": "friendly, approachable", "#FFA782": "playful, bright",
     "#FF9366": "social, uplifting",  "#FF7E4A": "energetic, glowing",
     "#FF692E": "vibrant, bold",      "#FF550F": "lively, dynamic",
     "#FF4400": "urgent, hot",        "#E53A00": "fiery, daring",
     "#CC3200": "confident, intense",
-
     "#FFF3CC": "light, cheerful",    "#FFE899": "optimistic, soft",
     "#FFDD66": "bright, lively",     "#FFD233": "happy, playful",
     "#FFC700": "energetic, radiant", "#E5B400": "warm, glowing",
     "#CC9F00": "confident, traditional", "#B38A00": "grounded, strong",
     "#997700": "serious, earthy",
-
     "#F7FFCC": "fresh, airy",        "#ECFF99": "light, hopeful",
     "#E1FF66": "bright, energetic",  "#D6FF33": "playful, zesty",
     "#CCFF00": "vibrant, lively",    "#B3E600": "crisp, dynamic",
     "#99CC00": "natural, cheerful",  "#80B300": "balanced, grounded",
     "#669900": "earthy, stable",     "#4D8000": "deep, organic",
-
     "#E8FFD9": "soothing, natural",  "#CEFFB3": "fresh, gentle",
     "#B5FF8C": "peaceful, optimistic", "#9CFF66": "healthy, uplifting",
     "#82FF40": "growth-oriented, bright", "#69FF1A": "energetic, lively",
     "#50E600": "vibrant, refreshing", "#3ACC00": "steady, confident",
     "#259900": "grounded, stable",   "#1A6600": "deep, earthy",
-
     "#D9FFE8": "clean, serene",      "#B3FFD1": "fresh, balanced",
     "#8CFFBA": "gentle, open",       "#66FFA3": "smooth, calming",
     "#40FF8C": "easygoing, refreshing", "#1AFF75": "bright, energetic",
     "#00E65E": "crisp, vibrant",     "#00CC52": "focused, steady",
     "#00993D": "grounded, introspective", "#006628": "deep, quiet",
-
     "#D9FFF7": "airy, soft",         "#B3FFF0": "clear, fresh",
     "#8CFFE8": "smooth, calming",    "#66FFE0": "cool, bright",
     "#40FFD9": "crisp, refreshing",  "#1AFFD2": "clean, futuristic",
     "#00E6BF": "energetic, lively",  "#00CCAA": "crisp, focused",
     "#009988": "deep, cool",         "#00665C": "introspective, calm",
-
     "#D9F5FF": "calm, gentle",       "#B3EBFF": "peaceful, airy",
     "#8CE1FF": "light, fresh",       "#66D6FF": "open, bright",
     "#40CCFF": "cool, expressive",   "#1AC2FF": "clear, smooth",
     "#00A9E6": "focused, thoughtful", "#008FCC": "deep, stable",
     "#0076B3": "serious, reflective", "#005C8C": "quiet, introspective",
     "#003F66": "deep, contemplative",
-
     "#EBE6FF": "dreamy, nostalgic",  "#D1CCFF": "soft, thoughtful",
     "#B8B3FF": "gentle, whimsical",  "#9E99FF": "creative, open",
     "#857FFF": "mystical, expressive", "#6C66FF": "imaginative, intuitive",
     "#524CFF": "emotional, deep",    "#3A33E6": "introspective, serious",
     "#251FCC": "brooding, powerful", "#150FB3": "mysterious, dramatic",
     "#0A078A": "dark, contemplative",
-
     "#FFE6FA": "soft, romantic",     "#FFCFF5": "tender, dreamy",
     "#FFB8EF": "affectionate, sweet", "#FF9EE8": "playful, hopeful",
     "#FF85E1": "expressive, lively", "#FF6CDC": "bright, energetic",
     "#FF52D6": "bold, vibrant",      "#FF33CC": "dynamic, confident",
     "#E600B8": "intense, electric",  "#B3008A": "deep, emotional",
     "#800066": "mysterious, powerful",
-
     "#FFF5F7": "pure, gentle",       "#FFE0E8": "soft, sweet",
     "#FFCCD9": "romantic, tender",   "#FFB8CB": "warm, affectionate",
     "#FFA3BC": "comforting, uplifting", "#FF8EAD": "friendly, bright",
     "#FF799F": "lively, playful",    "#FF638F": "energetic, expressive",
     "#FF4D7F": "bold, emotional",    "#CC3A64": "deep, dramatic",
     "#99284A": "serious, passionate",
-
     "#F2F2F2": "clean, simple",      "#E0E0E0": "soft, minimal",
     "#CCCCCC": "neutral, calm",      "#B3B3B3": "balanced, muted",
     "#999999": "steady, quiet",      "#808080": "grounded, cool",
     "#666666": "serious, deep",      "#4D4D4D": "focused, introspective",
     "#333333": "mysterious, powerful", "#1A1A1A": "dramatic, brooding",
     "#000000": "authoritative, enigmatic",
-
     "#FFFFFF": "pure, open",         "#FAFAFA": "light, calm",
     "#F7F7F7": "peaceful, soft",     "#F0F0F0": "clean, gentle",
-
     "#FFD7B3": "warm, comforting",   "#FFC499": "soft, natural",
     "#FFB180": "gentle, human",      "#FF9E66": "approachable, warm",
     "#E6884D": "grounded, steady",   "#CC7333": "earthy, stable",
     "#B35E1A": "deep, dignified",    "#8C4714": "serious, rugged",
-
     "#F6E8D5": "calm, organic",      "#E9D3B8": "soft, natural",
     "#D9BA96": "warm, grounded",     "#C7A47B": "stable, earthy",
     "#B38B5F": "serious, balanced",  "#9C7647": "deep, rugged",
     "#7A5A33": "strong, steady",     "#5C4426": "earthy, powerful",
-
     "#FFD966": "bright, joyful",     "#FFCC33": "happy, radiant",
     "#FFBF00": "confident, warm",    "#E6AC00": "traditional, steady",
     "#CC9900": "serious, grounded",  "#B38600": "rich, warm",
-
     "#C0C0C0": "sleek, modern",      "#D4AF37": "luxurious, rich",
     "#B76E79": "romantic, elegant",  "#B87333": "earthy, bold",
     "#CD7F32": "grounded, strong",   "#E5E4E2": "refined, pure",
-
     "#E3F2FD": "calm, airy",         "#BBDEFB": "light, peaceful",
     "#64B5F6": "open, fresh",        "#42A5F5": "clear, expressive",
     "#2196F3": "balanced, stable",   "#1976D2": "serious, thoughtful",
     "#0D47A1": "deep, introspective",
-
     "#FFCDE3": "tender, sweet",      "#FFB0D0": "romantic, soft",
     "#FF93BD": "gentle, uplifting",  "#FF77AB": "expressive, lively",
     "#FF5A98": "bold, emotional",    "#FF3D86": "dynamic, passionate",
     "#C72E66": "deep, intense",
-
     "#F3FFE6": "fresh, pure",        "#DEFFCC": "soft, natural",
     "#C8FFB3": "gentle, balanced",   "#B3FF99": "healthy, uplifting",
     "#99FF80": "light, optimistic",  "#80FF66": "energetic, playful",
     "#66CC52": "grounded, stable",
-
     "#FFE0B3": "warm, soft",         "#FFC180": "uplifting, bright",
     "#FFA64D": "friendly, lively",   "#FF8A1A": "energetic, bold",
     "#E67300": "strong, confident",  "#CC6600": "serious, grounded",
-
     "#E0F7FA": "clean, airy",        "#B2EBF2": "cool, calm",
     "#80DEEA": "light, peaceful",    "#4DD0E1": "open, refreshing",
     "#26C6DA": "smooth, expressive", "#00BCD4": "crisp, modern",
@@ -188,6 +152,7 @@ COLOR_DESCRIPTIONS = {
 }
 
 EMOTION_COORDINATES = {
+    # Keep your exact emotion mappings here
     "gentle":        {"v": 0.75, "e": 0.25},
     "airy":          {"v": 0.85, "e": 0.20},
     "soft":          {"v": 0.70, "e": 0.20},
@@ -293,30 +258,19 @@ def _normalize_text(s: str) -> str:
 
 
 def _resolve_color_emotion(description: str):
-    """
-    Parses a comma-separated emotion string like 'gentle, airy'
-    and returns the average (valence, energy) targets.
-    Falls back to neutral (0.5, 0.5) for unknown words.
-    """
     words = [w.strip().lower() for w in description.replace(",", " ").split()]
     v_list, e_list = [], []
-
     for word in words:
         coords = EMOTION_COORDINATES.get(word)
         if coords:
             v_list.append(coords["v"])
             e_list.append(coords["e"])
-
     v = sum(v_list) / len(v_list) if v_list else 0.5
     e = sum(e_list) / len(e_list) if e_list else 0.5
     return v, e
 
 
 def _nearest_hex(hex_color: str) -> str:
-    """
-    Returns the nearest key from COLOR_DESCRIPTIONS using RGB distance.
-    Used as a fallback when the exact hex isn't in the map.
-    """
     hex_color = hex_color.upper().lstrip("#")
     try:
         r1, g1, b1 = int(hex_color[0:2], 16), int(hex_color[2:4], 16), int(hex_color[4:6], 16)
@@ -337,18 +291,21 @@ def _nearest_hex(hex_color: str) -> str:
 
 
 def _get_lyric_sim(title: str, artist: str, query_norm: np.ndarray) -> float:
-    """Returns cosine similarity between lyrics embedding and query, or 0.0."""
+    """Returns cosine similarity between lyrics embedding and query text fraction."""
     _ensure_loaded()
     key = f"{_normalize_text(title)}::{_normalize_text(artist)}"
     entry = _LYRICS_EMBEDDINGS.get(key)  # type: ignore[union-attr]
     if entry is None:
         return 0.0
     try:
-        l_vec = np.array(entry["embedding"], dtype=np.float32)[:512]
+        l_vec = np.array(entry["embedding"], dtype=np.float32)[:515]
         norm = np.linalg.norm(l_vec)
         if norm < 1e-9:
             return 0.0
-        return float(np.dot(l_vec / norm, query_norm))
+        # If your query matrix is 515 dims, slice the lyrics embedding match to 515 dims
+        q_sliced = query_norm[:l_vec.shape[0]]
+        q_sliced_norm = q_sliced / (np.linalg.norm(q_sliced) + 1e-9)
+        return float(np.dot(l_vec / norm, q_sliced_norm))
     except Exception:
         return 0.0
 
@@ -367,23 +324,13 @@ def recommend_hybrid(
     store=None,
     **kwargs,
 ) -> list:
-    """
-    Returns up to `limit` recommendations from the live SongStore.
-
-    Single source of truth: only the SongStore passed in is used.
-    No CSV fallback — if the store is empty, an empty list is returned
-    and the caller should check /indexing_status.
-    """
     _ensure_loaded()
 
-    # Guard: store must be populated
     if store is None or store.vectors is None or not store.metadata:
         print("[Recommender] Store is empty — returning no results.")
         return []
 
-    # -----------------------------------------------------------------------
-    # 1. Resolve colour → emotional targets
-    # -----------------------------------------------------------------------
+    # 1. Resolve targets
     clean_hex = hex_color.upper() if hex_color else "#FFFFFF"
     description = COLOR_DESCRIPTIONS.get(
         clean_hex,
@@ -391,22 +338,16 @@ def recommend_hybrid(
     )
     v_target, e_target = _resolve_color_emotion(description)
 
-    # Allow explicit overrides passed from main.py
     v_target = v if v is not None else v_target
     e_target = a if a is not None else e_target
 
-    # -----------------------------------------------------------------------
-    # 2. Normalise query vector
-    # -----------------------------------------------------------------------
-    query_vec = np.asarray(query_embed, dtype=np.float32).flatten()[:512]
+    # 2. Normalise query vector at 515 dimensions
+    query_vec = np.asarray(query_embed, dtype=np.float32).flatten()[:515]
     query_norm = query_vec / (np.linalg.norm(query_vec) + 1e-9)
 
-    # -----------------------------------------------------------------------
-    # 3. Build working DataFrame from store metadata
-    # -----------------------------------------------------------------------
+    # 3. Build DataFrame
     df = pd.DataFrame(store.metadata).copy()
 
-    # Normalise column names — store uses 'title', older entries may use 'name'
     if "name" in df.columns and "title" not in df.columns:
         df = df.rename(columns={"name": "title"})
     if "id" in df.columns and "spotify_id" not in df.columns:
@@ -416,32 +357,25 @@ def recommend_hybrid(
         print("[Recommender] Metadata is missing 'title' column — returning no results.")
         return []
 
-    # -----------------------------------------------------------------------
-    # 4. CLAP cosine similarities
-    # -----------------------------------------------------------------------
+    # 4. CLAP cosine similarities at 515 dimensions
     store_matrix = np.vstack(store.vectors).astype(np.float32)
 
-    # Align to 512 dims to match the query
-    if store_matrix.shape[1] > 512:
-        store_matrix = store_matrix[:, :512]
+    if store_matrix.shape[1] > 515:
+        store_matrix = store_matrix[:, :515]
 
     norms = np.linalg.norm(store_matrix, axis=1, keepdims=True) + 1e-9
     store_norm = store_matrix / norms
     clap_scores = store_norm @ query_norm  # shape: (N,)
 
-    # -----------------------------------------------------------------------
-    # 5. Normalise vibe vector once if present
-    # -----------------------------------------------------------------------
+    # 5. Normalise vibe vector at 515 dimensions if present
     vibe_norm = None
     if vibe_vector is not None:
-        vv = np.asarray(vibe_vector, dtype=np.float32).flatten()[:512]
+        vv = np.asarray(vibe_vector, dtype=np.float32).flatten()[:515]
         vn = np.linalg.norm(vv)
         if vn > 1e-9:
             vibe_norm = vv / vn
 
-    # -----------------------------------------------------------------------
     # 6. Blacklist filter
-    # -----------------------------------------------------------------------
     artists_series = df["artists"].apply(
         lambda x: ", ".join(x) if isinstance(x, list) else str(x)
     )
@@ -454,9 +388,7 @@ def recommend_hybrid(
     is_allowed = text_data.str.contains(allow_pat, na=False)
     valid_mask = ~(is_ost & ~is_allowed)
 
-    # -----------------------------------------------------------------------
-    # 7. Score every track
-    # -----------------------------------------------------------------------
+    # 7. Score tracks
     scores = np.zeros(len(df), dtype=np.float32)
 
     for idx in range(len(df)):
@@ -464,17 +396,14 @@ def recommend_hybrid(
             scores[idx] = -999.0
             continue
 
-        # Base: CLAP similarity (50 % weight)
         score = float(clap_scores[idx]) * 0.5
 
-        # Emotional distance penalty
         row = df.iloc[idx]
         track_v = float(row.get("valence", 0.5))
         track_e = float(row.get("energy", 0.5))
         score -= abs(track_v - v_target) * 0.15
         score -= abs(track_e - e_target) * 0.15
 
-        # Lyrics similarity bonus (up to +0.10)
         title = str(row.get("title", ""))
         artist_raw = row.get("artists", "")
         artist = (
@@ -485,7 +414,6 @@ def recommend_hybrid(
         lyric_sim = _get_lyric_sim(title, artist, query_norm)
         score += lyric_sim * 0.10
 
-        # Personalisation boost (up to +0.20)
         if vibe_norm is not None:
             track_vec = store_norm[idx]
             vibe_sim = float(np.dot(track_vec, vibe_norm))
@@ -493,9 +421,7 @@ def recommend_hybrid(
 
         scores[idx] = score
 
-    # -----------------------------------------------------------------------
-    # 8. Rank and build output
-    # -----------------------------------------------------------------------
+    # 8. Rank output
     top_indices = np.argsort(scores)[::-1][:limit]
 
     recommendations = []

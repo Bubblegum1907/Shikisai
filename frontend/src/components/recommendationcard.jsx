@@ -1,25 +1,6 @@
 import React, { useMemo } from "react";
 import { motion } from "framer-motion";
 
-/**
- * RecommendationCard
- *
- * Displays a single recommended track with a Spotify link.
- *
- * Fixes:
- * - Valence and energy are now read from the API response correctly
- *   (file 6 / song_store.py now stores them directly on the metadata
- *   object, so they're always present).
- * - Artist display handles all formats: string, array, Python-style
- *   stringified list like "['Artist']".
- * - Glow colour now maps across the full emotional spectrum rather
- *   than just warm-amber vs violet.
- * - Card shows a subtle energy indicator bar at the bottom so users
- *   get a visual sense of the track's mood.
- * - Spotify link gracefully falls back to a search URL when no track
- *   ID is available, so the button is never broken.
- */
-
 function parseArtists(raw) {
   if (!raw) return "Unknown Artist";
 

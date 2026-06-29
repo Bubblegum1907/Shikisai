@@ -26,18 +26,26 @@ def main():
 
     vectors = np.load(SNG_VEC)
     
-    print(f"Loaded {len(songs)} metadata and {len(vectors)} vectors.")
+    print(f"Loaded {len(songs)} metadata records and {len(vectors)} vectors.")
+    print(f"Vector shape detected: {vectors.shape}")
 
     count = min(len(songs), len(vectors))
     rows = []
 
     for i in range(count):
         s = songs[i]
-        vec = vectors[i].tolist() 
-        vad = s.get("vad_score", [0.5, 0.5, 0.5])
+        raw_vec = vectors[i]
+        
+        # Smart Slicing: Check if vectors already contain appended VAD metrics (515 dimensions)
+        if raw_vec.shape[0] == 515:
+            base_vec = raw_vec[:512].tolist()  # Keep only pure CLAP embedding in the text slot
+            vad = raw_vec[-3:].tolist()        # Pull true computed VAD from the tail
+        else:
+            base_vec = raw_vec.tolist()
+            # Fall back to metadata dictionary or standard neutral coordinates
+            vad = s.get("vad_score") or [0.5, 0.5, 0.5]
 
         raw_artists = s.get("artists", "Unknown")
-        
         if isinstance(raw_artists, list):
             artists_str = ", ".join(raw_artists)
         else:
@@ -48,9 +56,10 @@ def main():
             "name": s.get("title") or "Unknown",
             "artists": artists_str, 
             "genres": s.get("genres") or [],
-            "clap_embed": json.dumps(vec), 
+            "clap_embed": json.dumps(base_vec), 
             "valence": float(vad[0]),
-            "energy": float(vad[1]),
+            "energy": float(vad[1]),     # Maps neatly to Arousal
+            "dominance": float(vad[2]),  # Preserves emotional posture/power axis
         })
 
     df = pd.DataFrame(rows)

@@ -31,23 +31,21 @@ def main():
             clap_val = row.get("clap_embed", "[]")
             emb = eval(clap_val) if isinstance(clap_val, str) else clap_val
             
+            # Ensure it is a valid list
             if not isinstance(emb, list) or len(emb) == 0:
-                # Fallback to zeros if empty so it matches standard 512 dimensions
-                emb = [0.0] * 512
-            elif len(emb) != 512:
-                emb = emb[:512] + [0.0] * max(0, 512 - len(emb))
-
-            # 2. Extract metrics
+                # Fallback to zeros matching standard 515 dimensions
+                emb = [0.0] * 515
+            elif len(emb) != 515:
+                # Pad or slice cleanly to exactly 515 dimensions
+                emb = emb[:515] + [0.0] * max(0, 515 - len(emb))
+                
+            # 2. Extract metrics for metadata
             v = float(row.get("valence", 0.5))
             a = float(row.get("energy", 0.5)) # Energy maps directly to arousal
             d = float(row.get("dominance", 0.5)) # Fallback default
 
-            # 3. Assemble the exact 1027-dimensional vector layout
-            text_part = np.array(emb, dtype=np.float32)
-            audio_part = np.zeros(512, dtype=np.float32)
-            vad_part = np.array([v, a, d], dtype=np.float32)
-            
-            combined_vec = np.concatenate([text_part, audio_part, vad_part]) # Exactly 1027
+            # 3. Use the 515-dimensional vector directly
+            combined_vec = np.array(emb, dtype=np.float32) # Exactly 515 dimensions
             vector_list.append(combined_vec)
 
             # 4. Reconstruct metadata dictionary layout
@@ -89,7 +87,7 @@ def main():
 
     print("\n✨ Data Generation Complete!")
     print(f"📁 song_metadata.json -> Saved {len(meta_entries)} items.")
-    print(f"📁 song_vectors.npy  -> Saved matrix with shape {final_vectors.shape}")
+    print(f"📁 song_vectors.npy   -> Saved matrix with shape {final_vectors.shape}")
 
 if __name__ == "__main__":
     main()

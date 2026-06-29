@@ -1,19 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 
-/**
- * SpotifyAuthButton
- *
- * Fixes:
- * - Shows a loading state between clicking Connect and the OAuth
- *   redirect completing, so users don't think it's broken and
- *   click multiple times.
- * - After a successful connect (token present in localStorage),
- *   automatically fires /build_index_spotify so the recommendation
- *   store starts building in the background immediately.
- * - Logout clears all stored tokens cleanly.
- */
-
 const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
 
 async function triggerIndexing(token) {

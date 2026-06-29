@@ -2,18 +2,6 @@
 lyrics_embedder.py
 
 Fetches lyrics and encodes them into fixed-dimension vectors using CLAP.
-
-Fixes:
-- Target dimension is now a named constant (TEXT_DIM = 512) shared with
-  song_store.py instead of a magic number that could drift out of sync.
-- Embeddings are validated (non-zero, correct shape) before being written
-  to cache — a zero vector or wrong-dim vector is rejected and None is
-  returned so the caller can skip the track.
-- Cache entries are validated on load so corrupt entries from previous
-  runs don't silently produce bad vectors.
-- lyrics[:MAX_CHARS] truncation now happens on word boundaries so CLAP
-  doesn't receive a half-cut token at the boundary.
-- embed_many() reports a proper summary including skip count.
 """
 
 import json
@@ -27,11 +15,10 @@ BACKEND_ROOT = _THIS_FILE.parents[2]  # backend/app/utils → backend
 
 EMBED_CACHE_PATH = BACKEND_ROOT / "app" / "data" / "lyrics_embeddings.json"
 
-# Must match TEXT_DIM in song_store.py
-TEXT_DIM = 512
+# FIXED: Must match the unified 512 CLAP + 3 VAD dimension space
+TEXT_DIM = 515
 
 # How many characters of lyrics to pass to CLAP
-# ~1000 chars ≈ one verse + chorus, enough for semantic signal
 MAX_CHARS = 1000
 
 
@@ -65,7 +52,7 @@ class LyricsEmbedder:
             with open(EMBED_CACHE_PATH, "r", encoding="utf-8") as f:
                 raw: Dict = json.load(f)
 
-            # Validate each entry — reject corrupt / wrong-dim embeddings
+            # Validate each entry — reject corrupt / old 512-dim embeddings
             clean = {}
             rejected = 0
             for key, entry in raw.items():
@@ -73,14 +60,15 @@ class LyricsEmbedder:
                     rejected += 1
                     continue
                 emb = entry.get("embedding")
-                if not isinstance(emb, list) or len(emb) < 64:
+                # UPDATED: Explicitly check that cached items match our new 515 target size
+                if not isinstance(emb, list) or len(emb) != self.target_dim:
                     rejected += 1
                     continue
                 clean[key] = entry
 
             if rejected:
                 print(
-                    f"[LyricsEmbedder] Dropped {rejected} invalid cache entries on load."
+                    f"[LyricsEmbedder] Dropped {rejected} stale/invalid cache entries on load."
                 )
             return clean
 
@@ -115,7 +103,7 @@ class LyricsEmbedder:
             raw = self.clap.encode_text(text)
             emb = np.asarray(raw, dtype=np.float32).flatten()
 
-            # Resize to target_dim
+            # Resize to target_dim (Now beautifully maps to 515)
             if emb.shape[0] > self.target_dim:
                 emb = emb[: self.target_dim]
             elif emb.shape[0] < self.target_dim:
@@ -137,18 +125,8 @@ class LyricsEmbedder:
     # -----------------------------------------------------------------------
 
     def embed_song(self, title: str, artist: str) -> Optional[np.ndarray]:
-        """
-        Returns a target_dim-dimensional embedding for the song.
-
-        Pipeline:
-          1. Return cached embedding if present and valid.
-          2. Fetch lyrics via LyricsFetcher.
-          3. Truncate on word boundary and encode with CLAP.
-          4. Validate result and write to cache.
-          5. Return embedding, or None if any step fails.
-        """
-        # Import here to avoid circular imports at module level
-        from app.utils.lyrics_fetcher import LyricsFetcher
+        """Returns a target_dim-dimensional embedding for the song."""
+        from .lyrics_fetcher import LyricsFetcher
 
         key = self._cache_key(title, artist)
 
@@ -161,7 +139,8 @@ class LyricsEmbedder:
             else:
                 # Stale / corrupt entry — re-fetch
                 print(f"[LyricsEmbedder] Stale cache entry for '{title}' — re-fetching.")
-                del self.cache[key]
+                if key in self.cache:
+                    del self.cache[key]
 
         # Fetch lyrics
         try:
@@ -193,13 +172,7 @@ class LyricsEmbedder:
         return emb
 
     def embed_many(self, songs: List[Dict]) -> Dict[str, int]:
-        """
-        Embeds a list of songs in order.
-
-        Each dict should have 'title'/'name' and 'artists'/'artist' keys.
-
-        Returns a summary dict: {success, skipped, failed}
-        """
+        """Embeds a list of songs in order."""
         success = skipped = failed = 0
 
         print(f"[LyricsEmbedder] Starting batch embedding for {len(songs)} songs…")
@@ -208,7 +181,6 @@ class LyricsEmbedder:
             title = song.get("name") or song.get("title") or ""
             artist_raw = song.get("artists") or song.get("artist") or ""
 
-            # Normalise artist to a plain string
             if isinstance(artist_raw, list):
                 artist = artist_raw[0] if artist_raw else "Unknown"
             else:
@@ -218,7 +190,6 @@ class LyricsEmbedder:
                 skipped += 1
                 continue
 
-            # Skip if already cached and valid
             key = self._cache_key(title, artist)
             cached = self.cache.get(key)
             if (

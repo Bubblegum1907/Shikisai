@@ -1,7 +1,12 @@
 import numpy as np
-from app.utils.spotify_fetch import SpotifyFetcher
-from app.utils.lyrics_embedder import LyricsEmbedder
-from app.utils.clap_encoder import ClapEncoder
+
+# Fixed imports using relative paths
+from .spotify_fetch import SpotifyFetcher
+from .lyrics_embedder import LyricsEmbedder
+from .clap_encoder import ClapEncoder
+from dotenv import load_dotenv
+
+load_dotenv()
 
 def generate_vibe_vector(access_token, limit=20):
     sp_fetcher = SpotifyFetcher()
@@ -30,10 +35,10 @@ def generate_vibe_vector(access_token, limit=20):
         print("No embeddings generated.")
         return None
     
+    # Linear decay weights (giving more importance to top-played tracks)
     weights = np.linspace(1.0, 0.5, num=len(embeddings))
     vibe_vector = np.average(embeddings, axis=0, weights=weights)
     vibe_vector = vibe_vector / (np.linalg.norm(vibe_vector) + 1e-9)
     print("Vibe Vector generated successfully.")
     
     return vibe_vector
-

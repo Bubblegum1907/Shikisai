@@ -293,10 +293,10 @@ def recommend(
         text_emb = clap.encode_text(prompt)
         text_emb = np.asarray(text_emb, dtype=np.float32).flatten()
 
-        if text_emb.size > 512:
-            text_emb = text_emb[:512]
+        if text_emb.size > 515:
+            text_emb = text_emb[:515]
         else:
-            text_emb = np.pad(text_emb, (0, max(0, 512 - text_emb.size)))
+            text_emb = np.pad(text_emb, (0, max(0, 515 - text_emb.size)))
 
         # 4. Hybrid recommendation
         print("[RECOMMEND] Querying hybrid pool…")

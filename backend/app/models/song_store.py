@@ -2,16 +2,7 @@
 song_store.py
 
 FAISS-backed store for song vectors.
-
-Fixes:
-- VAD dominance (d) was always 0.5 for every track — now read from
-  track data where available, with 0.5 as a true fallback only.
-- Vector dimension is enforced consistently throughout so FAISS never
-  receives mismatched shapes.
-- load_index() no longer raises on missing files — it returns gracefully
-  so the app can start without a pre-built index.
-- add_spotify_tracks() validates each vector before adding to prevent
-  a single bad track from breaking the whole batch.
+Updated to support a unified 515-dimensional layout (512 CLAP + 3 VAD).
 """
 
 import os
@@ -21,9 +12,8 @@ import faiss
 from typing import List, Dict, Optional
 
 TEXT_DIM = 512
-AUDIO_DIM = 512
 VAD_DIM = 3
-FINAL_DIM = TEXT_DIM + AUDIO_DIM + VAD_DIM  # 1027
+FINAL_DIM = TEXT_DIM + VAD_DIM  # Exactly 515 dimensions
 
 
 class SongStore:
@@ -76,20 +66,15 @@ class SongStore:
         d: float = 0.5,
     ) -> Optional[np.ndarray]:
         """
-        Builds the full FINAL_DIM (1027) vector.
+        Builds the full FINAL_DIM (515) vector.
 
         Layout:
-          [0:512]    — text (CLAP) embedding
-          [512:1024] — audio embedding (zeros until audio features available)
-          [1024:1027] — VAD: valence, arousal, dominance
-
-        All three VAD values are now real parameters, not hardcoded.
+          [0:512]  — text (CLAP) embedding
+          [512:515] — VAD: valence, arousal, dominance
         """
         text_emb = self._clean_text_embedding(text_output)
         if text_emb is None:
             return None
-
-        audio_emb = np.zeros(AUDIO_DIM, dtype=np.float32)
 
         # Clamp VAD values to [0, 1]
         vad = np.array(
@@ -97,7 +82,7 @@ class SongStore:
             dtype=np.float32,
         )
 
-        vec = np.concatenate([text_emb, audio_emb, vad])
+        vec = np.concatenate([text_emb, vad])
         norm = np.linalg.norm(vec)
         if norm < 1e-9:
             return None
@@ -129,20 +114,12 @@ class SongStore:
         tracks: List[Dict],
         color_hex: Optional[str] = None,
     ) -> int:
-        """
-        Encodes and indexes a list of Spotify track dicts.
-
-        Each track dict should contain at minimum:
-          spotify_id, title/name, artists, valence, energy
-
-        Returns the number of new tracks successfully added.
-        """
+        """Encodes and indexes a list of Spotify track dicts."""
         if not isinstance(tracks, list) or not tracks:
             return 0
 
         from app.utils.color_to_text import color_to_text_prompt
 
-        # Fallback prompt + VAD used when a track has no native audio features
         fallback_prompt = ""
         fallback_v, fallback_a = 0.5, 0.5
         if color_hex:
@@ -159,7 +136,6 @@ class SongStore:
             if not spotify_id or spotify_id in self.seen_ids:
                 continue
 
-            # Normalise artist list
             artists_raw = t.get("artists") or []
             if isinstance(artists_raw, str):
                 artists = [artists_raw]
@@ -172,11 +148,8 @@ class SongStore:
             title = t.get("title") or t.get("name") or "Unknown"
             genres: List[str] = t.get("artist_genres") or t.get("genres") or []
 
-            # FIX: read all three VAD dimensions from the track
             track_v = float(t.get("valence", fallback_v))
             track_a = float(t.get("energy", fallback_a))
-            # Dominance: use speechiness as a proxy (more speech → more dominant)
-            # Falls back to 0.5 if unavailable
             track_d = float(t.get("dominance", t.get("speechiness", 0.5)))
 
             text_desc = (
@@ -241,10 +214,7 @@ class SongStore:
         return len(new_vecs)
 
     def load_index(self):
-        """
-        Loads persisted vectors and metadata from disk.
-        Returns silently if files don't exist — no exception raised.
-        """
+        """Loads persisted vectors and metadata from disk cleanly."""
         if os.path.exists(self.meta_path):
             try:
                 with open(self.meta_path, "r", encoding="utf-8") as f:
@@ -265,14 +235,11 @@ class SongStore:
                 print(f"[SongStore] Loaded vectors: {self.vectors.shape}")
                 self._build_faiss()
             except Exception as e:
-                print(f"[SongStore] Could not load vectors: {e}")
+                print(f"[SongStore] Could not load vectors into FAISS: {e}")
                 self.vectors = None
 
     def search(self, query_vector: np.ndarray, k: int = 10) -> List[Dict]:
-        """
-        Returns the top-k most similar tracks by inner product.
-        Returns empty list if the index is not built yet.
-        """
+        """Returns top-k metrics via FAISS index."""
         if self.index is None:
             return []
 
@@ -292,5 +259,4 @@ class SongStore:
 
     @property
     def size(self) -> int:
-        """Number of tracks currently in the store."""
         return len(self.metadata)

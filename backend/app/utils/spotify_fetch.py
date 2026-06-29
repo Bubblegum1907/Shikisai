@@ -6,8 +6,9 @@ from collections import Counter
 
 class SpotifyFetcher:
     """
-    Optimized helpers for fetching user's tracks. 
-    Handles large libraries using batching and multiple sources.
+    Optimized helpers for fetching user's tracks and analyzing taste profiles.
+    Handles large libraries using batching and relies entirely on actively 
+    supported Spotify Web API endpoints.
     """
     def __init__(self):
         self.auth = SpotifyAuth()
@@ -94,25 +95,11 @@ class SpotifyFetcher:
                 for a in t.get("artists", []):
                     if a.get("id"): all_artist_ids.add(a.get("id"))
 
-        # 1. Fetch and Cache Artist Genres in Patches
+        # Fetch and Cache Artist Genres in Patches (Fully Supported!)
+        print(f"[SpotifyFetcher] Gathering artist genres for {len(unique_tracks)} unique tracks...")
         self._get_batch_genres(sp, list(all_artist_ids))
 
-        # 2. BATCH LOOKUP AUDIO FEATURES (Max 100 per call)
-        print(f"[SpotifyFetcher] Gathering audio traits for {len(unique_tracks)} tracks...")
-        audio_features_cache = {}
-        unique_ids = [t.get("id") for t in unique_tracks if t.get("id")]
-        
-        for i in range(0, len(unique_ids), 100):
-            chunk = unique_ids[i:i + 100]
-            try:
-                features_list = sp.audio_features(tracks=chunk)
-                for feat in features_list:
-                    if feat:
-                        audio_features_cache[feat["id"]] = feat
-            except Exception as e:
-                print(f"⚠️ Audio feature batch retrieval dropped: {e}")
-
-        # 3. Assemble Unified Structural Metadata Payloads
+        # Assemble Unified Structural Metadata Payloads (Without deprecated acoustic traits)
         results = []
         for t in unique_tracks:
             sid = t.get("id")
@@ -121,25 +108,22 @@ class SpotifyFetcher:
             for aid in a_ids:
                 genres.extend(self.artist_cache.get(aid, []))
             
-            # Extract acoustic analytics values or fallback to default weights cleanly
-            feat = audio_features_cache.get(sid, {}) if sid else {}
-            
             results.append({
                 "title": t.get("name"),
                 "artists": [a.get("name") for a in t.get("artists", [])],
                 "album": (t.get("album") or {}).get("name"),
                 "artist_genres": list(set(genres)),
                 "spotify_id": sid,
-                "valence": feat.get("valence", 0.5),
-                "energy": feat.get("energy", 0.5),
-                "speechiness": feat.get("speechiness", 0.0),
-                "instrumentalness": feat.get("instrumentalness", 0.0)
+                "popularity": t.get("popularity", 0)  # Added popularity as a valid substitute trait
             })
         
         return results
 
     def get_user_taste_profile(self, access_token: str, refresh_token: str):
-        """Builds profile from audio features."""
+        """
+        Reimagined Taste Profile: Since Spotify deprecated acoustic features,
+        this now safely aggregates top track genres and popularity metrics.
+        """
         sp = self._get_sp_client(access_token)
         if not sp: return None
 
@@ -148,20 +132,29 @@ class SpotifyFetcher:
             items = top.get("items", []) if top else []
             if not items: return None
 
-            track_ids = [t.get("id") for t in items if t.get("id")]
-            feats_data = sp.audio_features(tracks=track_ids)
-            feats = [f for f in feats_data if f]
+            # Collect artist IDs to get genres
+            all_artist_ids = set()
+            popularities = []
+            for t in items:
+                popularities.append(t.get("popularity", 0))
+                for a in t.get("artists", []):
+                    if a.get("id"): all_artist_ids.add(a.get("id"))
 
-            def avg(key):
-                vals = [f[key] for f in feats if f.get(key) is not None]
-                return sum(vals) / len(vals) if vals else 0.5
+            self._get_batch_genres(sp, list(all_artist_ids))
+
+            genres = []
+            for t in items:
+                for a in t.get("artists", []):
+                    genres.extend(self.artist_cache.get(a.get("id"), []))
+
+            genre_counts = Counter(genres)
+            avg_popularity = sum(popularities) / len(popularities) if popularities else 50
 
             return {
-                "valence": avg("valence"),
-                "energy": avg("energy"),
-                "acousticness": avg("acousticness"),
-                "danceability": avg("danceability"),
-                "tempo": avg("tempo"),
+                "top_genres": [g for g, _ in genre_counts.most_common(5)],
+                "average_track_popularity": avg_popularity,
+                "prefers_mainstream": avg_popularity > 70,
+                "total_unique_genres_discovered": len(genre_counts)
             }
         except Exception as e:
             print(f"Taste profile failed: {e}")
