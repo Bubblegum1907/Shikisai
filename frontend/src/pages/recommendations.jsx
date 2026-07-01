@@ -8,14 +8,18 @@ import { getRecs } from "../api/recAPI";
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 20; // 60 seconds max
 
+// Cleanly configure the backend base path from your environment variables
+const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+const BACKEND_URL = backendBaseUrl.replace(/\/$/, "");
+
 /**
- * Polls /api/indexing_status until indexing is done or we time out.
- * Returns a promise that resolves when the store has tracks.
+ * Polls the Hugging Face status endpoint instead of Vercel relative paths
  */
 async function waitForIndexing(onProgress) {
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     try {
-      const res = await fetch("/api/indexing_status");
+      // ✅ FIXED: Using the complete backend URL path
+      const res = await fetch(`${BACKEND_URL}/api/indexing_status`);
       if (res.ok) {
         const data = await res.json();
         onProgress(data);
@@ -26,7 +30,8 @@ async function waitForIndexing(onProgress) {
         // Done but empty (no tracks found or error)
         if (!data.running && data.done) return false;
       }
-    } catch {
+    } catch (err) {
+      console.warn("[Indexing Status] Network tick error:", err);
       // Network hiccup — keep polling
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
@@ -41,8 +46,6 @@ export default function Recommendations() {
   const [indexingStatus, setIndexingStatus] = useState(null);
   const navigate = useNavigate();
 
-  // FIX: use React Router's useSearchParams instead of window.location.search
-  // so this works correctly with client-side navigation
   const [searchParams] = useSearchParams();
   const color = searchParams.get("color") || "#7C3AED";
 
@@ -54,16 +57,14 @@ export default function Recommendations() {
       const res = await getRecs(color);
       const recs = res?.recommendations || [];
 
-      // If we got no results and Spotify is connected, check whether
-      // indexing is still running and wait for it
       const isConnected = localStorage.getItem("spotify_connected") === "true";
       if (recs.length === 0 && isConnected) {
-        const statusRes = await fetch("/api/indexing_status");
+        // ✅ FIXED: Using the complete backend URL path here too
+        const statusRes = await fetch(`${BACKEND_URL}/api/indexing_status`);
         if (statusRes.ok) {
           const status = await statusRes.json();
 
           if (status.running) {
-            // Indexing in progress — poll until done then retry
             setIndexingStatus(status);
             await waitForIndexing((s) => setIndexingStatus(s));
             const retryRes = await getRecs(color);
