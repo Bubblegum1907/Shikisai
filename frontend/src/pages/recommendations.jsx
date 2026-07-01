@@ -8,8 +8,7 @@ import { getRecs } from "../api/recAPI";
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 20; 
 
-// Safeguard backend routing environment variables cleanly
-const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || "https://bubblegum1907-shikisai.hf.space";
 const BACKEND_URL = backendBaseUrl.replace(/\/$/, "");
 
 async function waitForIndexing(onProgress) {
@@ -24,7 +23,6 @@ async function waitForIndexing(onProgress) {
         if (!data.running && data.done) return false;
       }
     } catch {
-      // Network hiccup — keep polling
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
@@ -49,11 +47,22 @@ export default function Recommendations() {
       const res = await getRecs(color);
       const rawRecs = res?.recommendations || [];
 
-      // ✅ Deduplication step inside Javascript execution loop
       const seen = new Set();
       const recs = rawRecs.filter(song => {
-        const uniqueKey = song.spotify_id || song.id || `${song.title}::${song.artists?.[0] || ''}`.toLowerCase();
-        if (seen.has(uniqueKey)) return false;
+        const trackId = song.spotify_id || song.track_id || song.id;
+        const songTitle = (song.title || song.name || "").toString().trim().toLowerCase();
+        
+        let artistName = "";
+        if (Array.isArray(song.artists)) {
+          artistName = typeof song.artists[0] === 'object' ? song.artists[0]?.name : song.artists[0];
+        } else {
+          artistName = song.artist || song.artists || "";
+        }
+        artistName = artistName.toString().trim().toLowerCase();
+
+        const uniqueKey = trackId ? trackId.toString() : `${songTitle}::${artistName}`;
+
+        if (!uniqueKey || seen.has(uniqueKey)) return false;
         seen.add(uniqueKey);
         return true;
       });
@@ -67,13 +76,26 @@ export default function Recommendations() {
           if (status.running) {
             setIndexingStatus(status);
             await waitForIndexing((s) => setIndexingStatus(s));
+            
             const retryRes = await getRecs(color);
             const rawRetry = retryRes?.recommendations || [];
             
             const retrySeen = new Set();
             const cleanRetry = rawRetry.filter(song => {
-              const uniqueKey = song.spotify_id || song.id || `${song.title}::${song.artists?.[0] || ''}`.toLowerCase();
-              if (retrySeen.has(uniqueKey)) return false;
+              const trackId = song.spotify_id || song.track_id || song.id;
+              const songTitle = (song.title || song.name || "").toString().trim().toLowerCase();
+              
+              let artistName = "";
+              if (Array.isArray(song.artists)) {
+                artistName = typeof song.artists[0] === 'object' ? song.artists[0]?.name : song.artists[0];
+              } else {
+                artistName = song.artist || song.artists || "";
+              }
+              artistName = artistName.toString().trim().toLowerCase();
+
+              const uniqueKey = trackId ? trackId.toString() : `${songTitle}::${artistName}`;
+
+              if (!uniqueKey || retrySeen.has(uniqueKey)) return false;
               retrySeen.add(uniqueKey);
               return true;
             });
