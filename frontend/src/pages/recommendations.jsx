@@ -6,28 +6,21 @@ import Loader from "../components/loader";
 import { getRecs } from "../api/recAPI";
 
 const POLL_INTERVAL_MS = 3000;
-const MAX_POLL_ATTEMPTS = 20; // 60 seconds max
+const MAX_POLL_ATTEMPTS = 20; 
 
-// 🛠️ Safeguard backend routing URLs cleanly
+// Safeguard backend routing environment variables cleanly
 const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
 const BACKEND_URL = backendBaseUrl.replace(/\/$/, "");
 
-/**
- * Polls /indexing_status until indexing is done or we time out.
- */
 async function waitForIndexing(onProgress) {
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     try {
-      // ✅ Absolute routing to avoid Vercel endpoint interception
-      const res = await fetch(`${BACKEND_URL}/indexing_status`);
+      const res = await fetch(`${BACKEND_URL}/api/indexing_status`);
       if (res.ok) {
         const data = await res.json();
         onProgress(data);
 
-        // Done — store has tracks
         if (!data.running && data.store_size > 0) return true;
-
-        // Done but empty (no tracks found or error)
         if (!data.running && data.done) return false;
       }
     } catch {
@@ -35,7 +28,7 @@ async function waitForIndexing(onProgress) {
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
   }
-  return false; // Timed out
+  return false; 
 }
 
 export default function Recommendations() {
@@ -56,21 +49,18 @@ export default function Recommendations() {
       const res = await getRecs(color);
       const rawRecs = res?.recommendations || [];
 
-      // ✅ FIX: Changed Python's .lower() to JavaScript's .toLowerCase()
+      // ✅ Deduplication step inside Javascript execution loop
       const seen = new Set();
       const recs = rawRecs.filter(song => {
-        const uniqueKey = song.id || `${song.title}::${song.artists?.[0] || ''}`.toLowerCase();
+        const uniqueKey = song.spotify_id || song.id || `${song.title}::${song.artists?.[0] || ''}`.toLowerCase();
         if (seen.has(uniqueKey)) return false;
         seen.add(uniqueKey);
         return true;
       });
 
-      // If we got no results and Spotify is connected, check whether
-      // indexing is still running and wait for it
       const isConnected = localStorage.getItem("spotify_connected") === "true";
       if (recs.length === 0 && isConnected) {
-        // ✅ Absolute routing to bypass Vercel routing limits
-        const statusRes = await fetch(`${BACKEND_URL}/indexing_status`);
+        const statusRes = await fetch(`${BACKEND_URL}/api/indexing_status`);
         if (statusRes.ok) {
           const status = await statusRes.json();
 
@@ -80,10 +70,9 @@ export default function Recommendations() {
             const retryRes = await getRecs(color);
             const rawRetry = retryRes?.recommendations || [];
             
-            // Apply defensive deduplication step to retry block too
             const retrySeen = new Set();
             const cleanRetry = rawRetry.filter(song => {
-              const uniqueKey = song.id || `${song.title}::${song.artists?.[0] || ''}`.toLowerCase();
+              const uniqueKey = song.spotify_id || song.id || `${song.title}::${song.artists?.[0] || ''}`.toLowerCase();
               if (retrySeen.has(uniqueKey)) return false;
               retrySeen.add(uniqueKey);
               return true;
