@@ -60,7 +60,7 @@ export default function Recommendations() {
       const isConnected = localStorage.getItem("spotify_connected") === "true";
       if (recs.length === 0 && isConnected) {
         // ✅ FIXED: Using the complete backend URL path here too
-        const statusRes = await fetch(`${BACKEND_URL}/api/indexing_status`);
+        const statusRes = await fetch(`${BACKEND_URL}/indexing_status`);
         if (statusRes.ok) {
           const status = await statusRes.json();
 
