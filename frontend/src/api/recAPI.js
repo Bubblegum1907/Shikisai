@@ -1,18 +1,7 @@
-/**
- * recAPI.js
- *
- * Fetches color-based music recommendations from the backend.
- *
- * FIX: Tokens are now sent in the Authorization header instead of
- * query params. Query param tokens get logged in server logs, browser
- * history, and any proxy sitting between client and server.
- */
-
 export async function getRecs(color) {
   const token = localStorage.getItem("spotify_token");
   const refreshToken = localStorage.getItem("spotify_refresh_token");
 
-  // Build headers — always send content type, conditionally send auth
   const headers = {
     "Content-Type": "application/json",
   };
@@ -25,7 +14,11 @@ export async function getRecs(color) {
     headers["X-Refresh-Token"] = refreshToken;
   }
 
-  const url = `/api/recommend?hex=${encodeURIComponent(color)}&k=10`;
+  const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+
+  const baseUrl = backendBaseUrl.rstrip ? backendBaseUrl.rstrip("/") : backendBaseUrl.replace(/\/$/, "");
+  
+  const url = `${baseUrl}/recommend?hex=${encodeURIComponent(color)}&k=10`;
 
   const res = await fetch(url, {
     method: "GET",
@@ -33,7 +26,6 @@ export async function getRecs(color) {
   });
 
   if (res.status === 401) {
-    // Token expired — clear storage and let the user reconnect
     localStorage.removeItem("spotify_token");
     localStorage.removeItem("spotify_refresh_token");
     localStorage.setItem("spotify_connected", "false");

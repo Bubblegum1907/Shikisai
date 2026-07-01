@@ -26,6 +26,7 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:8080",
         "http://127.0.0.1:8080",
+        "https://shikisai-pi.vercel.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -178,16 +179,16 @@ def auth_callback(code: Optional[str] = None):
         token_info = spotify_auth.oauth.get_access_token(code)
         access_token = token_info.get("access_token")
         refresh_token = token_info.get("refresh_token")
+        
+        frontend_url = os.getenv("FRONTEND_URL", "http://localhost:5173")
+        
+        frontend_url = frontend_url.rstrip("/")
+        
         return RedirectResponse(
-            url=(
-                f"http://127.0.0.1:8080/callback"
-                f"?token={access_token}"
-                f"&refresh_token={refresh_token}"
-            )
+            url=f"{frontend_url}/callback?token={access_token}&refresh_token={refresh_token}"
         )
     except Exception as e:
         raise HTTPException(400, f"Token exchange failed: {e}")
-
 
 # ---------------------------------------------------------------------------
 # Indexing routes

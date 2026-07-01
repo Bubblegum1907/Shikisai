@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:7860";
 
 async function triggerIndexing(token) {
   try {

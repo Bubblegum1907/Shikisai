@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { motion } from "framer-motion";
 
-const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
+const BACKEND = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:7860";
 
 async function triggerIndexing(token) {
   try {
@@ -25,18 +25,6 @@ async function triggerIndexing(token) {
   }
 }
 
-/**
- * Callback
- *
- * Landing page after Spotify OAuth redirect.
- *
- * Fixes:
- * - Uses useSearchParams() instead of window.location.search
- * - Shows a proper error screen if tokens are missing instead of
- *   silently redirecting to home with a broken state
- * - Triggers background indexing immediately after storing tokens
- * - Shows connecting animation while processing
- */
 export default function Callback() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
