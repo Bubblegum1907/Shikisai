@@ -8,17 +8,17 @@ import { getRecs } from "../api/recAPI";
 const POLL_INTERVAL_MS = 3000;
 const MAX_POLL_ATTEMPTS = 20; // 60 seconds max
 
-// Cleanly configure the backend base path from your environment variables
+// 🛠️ Safeguard backend routing URLs cleanly
 const backendBaseUrl = import.meta.env.VITE_BACKEND_URL || "http://127.0.0.1:8000";
 const BACKEND_URL = backendBaseUrl.replace(/\/$/, "");
 
 /**
- * Polls the Hugging Face status endpoint instead of Vercel relative paths
+ * Polls /indexing_status until indexing is done or we time out.
  */
 async function waitForIndexing(onProgress) {
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     try {
-      // ✅ FIXED: Using the complete backend URL path
+      // ✅ Absolute routing to avoid Vercel endpoint interception
       const res = await fetch(`${BACKEND_URL}/indexing_status`);
       if (res.ok) {
         const data = await res.json();
@@ -30,8 +30,7 @@ async function waitForIndexing(onProgress) {
         // Done but empty (no tracks found or error)
         if (!data.running && data.done) return false;
       }
-    } catch (err) {
-      console.warn("[Indexing Status] Network tick error:", err);
+    } catch {
       // Network hiccup — keep polling
     }
     await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
@@ -55,11 +54,22 @@ export default function Recommendations() {
 
     try {
       const res = await getRecs(color);
-      const recs = res?.recommendations || [];
+      const rawRecs = res?.recommendations || [];
 
+      // ✅ FIX: Changed Python's .lower() to JavaScript's .toLowerCase()
+      const seen = new Set();
+      const recs = rawRecs.filter(song => {
+        const uniqueKey = song.id || `${song.title}::${song.artists?.[0] || ''}`.toLowerCase();
+        if (seen.has(uniqueKey)) return false;
+        seen.add(uniqueKey);
+        return true;
+      });
+
+      // If we got no results and Spotify is connected, check whether
+      // indexing is still running and wait for it
       const isConnected = localStorage.getItem("spotify_connected") === "true";
       if (recs.length === 0 && isConnected) {
-        // ✅ FIXED: Using the complete backend URL path here too
+        // ✅ Absolute routing to bypass Vercel routing limits
         const statusRes = await fetch(`${BACKEND_URL}/indexing_status`);
         if (statusRes.ok) {
           const status = await statusRes.json();
@@ -68,7 +78,18 @@ export default function Recommendations() {
             setIndexingStatus(status);
             await waitForIndexing((s) => setIndexingStatus(s));
             const retryRes = await getRecs(color);
-            setSongs(retryRes?.recommendations || []);
+            const rawRetry = retryRes?.recommendations || [];
+            
+            // Apply defensive deduplication step to retry block too
+            const retrySeen = new Set();
+            const cleanRetry = rawRetry.filter(song => {
+              const uniqueKey = song.id || `${song.title}::${song.artists?.[0] || ''}`.toLowerCase();
+              if (retrySeen.has(uniqueKey)) return false;
+              retrySeen.add(uniqueKey);
+              return true;
+            });
+
+            setSongs(cleanRetry);
             setIndexingStatus(null);
             return;
           }
@@ -89,9 +110,6 @@ export default function Recommendations() {
     loadRecs();
   }, [loadRecs]);
 
-  // -------------------------------------------------------------------------
-  // Loading state
-  // -------------------------------------------------------------------------
   if (loading) {
     return (
       <Loader
@@ -104,9 +122,6 @@ export default function Recommendations() {
     );
   }
 
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
   return (
     <div
       style={{
@@ -122,7 +137,6 @@ export default function Recommendations() {
         overflowX: "hidden",
       }}
     >
-      {/* Back button */}
       <motion.button
         onClick={() => navigate("/")}
         initial={{ x: -20, opacity: 0 }}
@@ -164,7 +178,6 @@ export default function Recommendations() {
         Back to Wheel
       </motion.button>
 
-      {/* Header panel */}
       <motion.div
         initial={{ y: -20, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
@@ -226,7 +239,6 @@ export default function Recommendations() {
         </div>
       </motion.div>
 
-      {/* Recommendations list */}
       <motion.div
         layout
         style={{
