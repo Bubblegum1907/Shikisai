@@ -19,7 +19,7 @@ async function waitForIndexing(onProgress) {
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     try {
       // ✅ FIXED: Using the complete backend URL path
-      const res = await fetch(`${BACKEND_URL}/api/indexing_status`);
+      const res = await fetch(`${BACKEND_URL}/indexing_status`);
       if (res.ok) {
         const data = await res.json();
         onProgress(data);
