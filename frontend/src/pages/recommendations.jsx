@@ -15,7 +15,7 @@ const BACKEND_URL = backendBaseUrl.replace(/\/$/, "");
 async function waitForIndexing(onProgress) {
   for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
     try {
-      const res = await fetch(`${BACKEND_URL}/api/indexing_status`);
+      const res = await fetch(`${BACKEND_URL}/indexing_status`);
       if (res.ok) {
         const data = await res.json();
         onProgress(data);
@@ -60,7 +60,7 @@ export default function Recommendations() {
 
       const isConnected = localStorage.getItem("spotify_connected") === "true";
       if (recs.length === 0 && isConnected) {
-        const statusRes = await fetch(`${BACKEND_URL}/api/indexing_status`);
+        const statusRes = await fetch(`${BACKEND_URL}/indexing_status`);
         if (statusRes.ok) {
           const status = await statusRes.json();
 
